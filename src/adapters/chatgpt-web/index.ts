@@ -47,6 +47,7 @@ import {
 } from "./compaction-handoff";
 import { judgeCompactionHandoff } from "./compaction-judgments";
 import { suggestEffortTier } from "./effort-judgments";
+import { compileChatGptWebPromptWithRelevanceTrimming } from "./history-judgments";
 import {
   chatGptConversationKey,
   retainedConversationResumeRequest,
@@ -538,14 +539,14 @@ export function createChatGptWebAdapter(
         try {
           activeToken = await broker.registerSafe(environment, surfaceNonce, undefined, traceId);
           observeCapabilityRetirement(activeToken, externalProgress);
-          const compiled = compileChatGptWebPrompt(
+          const compiled = await compileChatGptWebPromptWithRelevanceTrimming(
             checkpointInput.parsed,
             turnCapabilities,
             activeToken,
             { manualControl: true },
           );
           const resumeCompiled = resumeInput
-            ? compileChatGptWebPrompt(
+            ? await compileChatGptWebPromptWithRelevanceTrimming(
               resumeInput,
               turnCapabilities,
               activeToken,
@@ -686,7 +687,7 @@ export function createChatGptWebAdapter(
         reasoning: parsed.options.reasoning,
         capabilities: turnCapabilities,
         prepare: async () => ({
-          ...compileChatGptWebPrompt(
+          ...await compileChatGptWebPromptWithRelevanceTrimming(
             checkpointInput.parsed,
             turnCapabilities,
             undefined,
@@ -730,7 +731,7 @@ export function createChatGptWebAdapter(
       );
       activeToken = turnToken;
       try {
-        const compiled = compileChatGptWebPrompt(
+        const compiled = await compileChatGptWebPromptWithRelevanceTrimming(
           input,
           turnCapabilities,
           turnToken,

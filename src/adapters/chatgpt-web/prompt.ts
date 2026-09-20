@@ -42,6 +42,11 @@ export interface CompileChatGptWebPromptOptions {
    * reads or mutates ChatGPT's DOM. Completion is accepted only through the bound Zero Risk MCP tools.
    */
   manualControl?: true;
+  /**
+   * Item 16: indexes into the (model-switch-filtered) history, least valuable first, that compaction
+   * fit recovery discards before falling back to oldest-first. Protected records are skipped.
+   */
+  compactionDiscardOrder?: readonly number[];
 }
 
 export const CHATGPT_BIGGER_CONTEXT_PARTS = 3 as const;
@@ -246,6 +251,11 @@ function plainMessageText(message: CodexMessage): string | undefined {
   if (typeof message.content === "string") return message.content;
   if (message.content.some(part => part.type !== "text")) return undefined;
   return message.content.map(part => part.type === "text" ? part.text : "").join("\n");
+}
+
+/** A user-role record carrying a readable cumulative compaction checkpoint. */
+export function isCompactionCheckpointMessage(message: CodexMessage): boolean {
+  return message.role === "user" && isReadableCompactionSummaryText(plainMessageText(message));
 }
 
 function startsWithControlBlock(message: CodexMessage, tag: string): boolean {
@@ -705,14 +715,24 @@ export function compileChatGptWebPrompt(
   );
 
   // A cumulative checkpoint may be the only remaining account of earlier work. Preserve the
-  // newest one and the final compaction instruction; trim other history in its original order.
-  let checkpointIndex = sourceMessages.findLastIndex(message =>
-    message.role === "user" && isReadableCompactionSummaryText(plainMessageText(message))
-  );
+  // newest one and the final compaction instruction; trim other history in its original order
+  // unless a relevance order says which records to give up first.
+  let checkpointIndex = sourceMessages.findLastIndex(isCompactionCheckpointMessage);
+  const originalIndexes = sourceMessages.map((_, index) => index);
+  const preferredDiscards = [...(options?.compactionDiscardOrder ?? [])];
+  const nextDiscardIndex = (): number | undefined => {
+    while (preferredDiscards.length > 0) {
+      const position = originalIndexes.indexOf(preferredDiscards.shift()!);
+      if (position >= 0 && position !== checkpointIndex && position !== sourceMessages.length - 1) return position;
+    }
+    const oldest = checkpointIndex === 0 ? 1 : 0;
+    return oldest === sourceMessages.length - 1 ? undefined : oldest;
+  };
   while (exceedsCompactionBudget() && sourceMessages.length > 1) {
-    const discardIndex = checkpointIndex === 0 ? 1 : 0;
-    if (discardIndex === sourceMessages.length - 1) break;
+    const discardIndex = nextDiscardIndex();
+    if (discardIndex === undefined) break;
     sourceMessages.splice(discardIndex, 1);
+    originalIndexes.splice(discardIndex, 1);
     if (checkpointIndex > discardIndex) checkpointIndex -= 1;
     // Rebuild image references and count the omission notice inside the same byte budget.
     compiled = build(sourceMessages, initialMessageCount - sourceMessages.length);
