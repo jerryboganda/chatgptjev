@@ -1,5 +1,6 @@
 import type { Locator, Page } from "playwright-core";
 import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
+import { describeChatGptLoginState } from "./adapters/chatgpt-web/ui-judgments";
 
 export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 export const CHATGPT_COMPOSER_SELECTOR = [
@@ -164,7 +165,9 @@ export async function assertAuthenticatedChatGptPage(page: Page): Promise<void> 
     CHATGPT_COMPOSER_SELECTOR,
   );
   if (!await anyVisible(composer)) {
-    throw new Error("ChatGPT authentication could not be verified: no visible composer is present");
+    // Item 12: Jev names the screen ChatGPT is actually showing (login form, 2FA, passkey, CAPTCHA…).
+    const guidance = await describeChatGptLoginState(page);
+    throw new Error(`ChatGPT authentication could not be verified: no visible composer is present${guidance ? `. ${guidance}` : ""}`);
   }
 }
 

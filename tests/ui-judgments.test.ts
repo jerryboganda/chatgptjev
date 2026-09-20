@@ -1,10 +1,23 @@
 import { afterEach, expect, test } from "bun:test";
 import type { Page } from "playwright-core";
-import { throwIfChatGptSessionFailureAlert } from "../src/adapters/chatgpt-web/browser-worker";
+import { promotedAnswerSegment, throwIfChatGptSessionFailureAlert } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptMarkdownBuffer } from "../src/adapters/chatgpt-web/markdown";
 import {
+  CHATGPT_ACCOUNT_LIMIT_COOLDOWN_MS,
+  MAX_CHATGPT_BROWSER_TABS,
+  chatGptAccountLimitedUntil,
+  chatGptBrowserTabCeilingError,
+  noteChatGptAccountLimited,
+  resetChatGptAccountLimitForTests,
+} from "../src/adapters/chatgpt-web/concurrency";
+import {
+  MAX_PROMOTION_CANDIDATES,
+  describeChatGptLoginState,
+  judgeAnswerRootPromotion,
   learnStoppedThinkingLabels,
   learnedStoppedThinkingLabels,
   resetChatGptUiJudgmentsForTests,
+  stalledTurnFailure,
   throwIfChatGptJudgedFailureDialog,
   visibleChatGptDialogTexts,
 } from "../src/adapters/chatgpt-web/ui-judgments";
@@ -49,6 +62,7 @@ afterEach(() => {
   restore?.();
   restore = undefined;
   resetChatGptUiJudgmentsForTests();
+  resetChatGptAccountLimitForTests();
 });
 
 test("a confidently judged error dialog becomes a structured adapter failure with the dialog excerpt", async () => {
@@ -130,4 +144,192 @@ test("an ordinary progress status is not learned as a stopped label", async () =
   learnStoppedThinkingLabels(["Analizando la solicitud"]);
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(learnedStoppedThinkingLabels.size).toBe(0);
+});
+
+const stalled = (overrides: Partial<Parameters<typeof stalledTurnFailure>[0]> = {}) => ({
+  elapsedSec: 61.4,
+  running: false,
+  completionActionVisible: false,
+  statusTexts: [],
+  overlayTexts: [],
+  answerTail: "",
+  ...overrides,
+});
+
+const stallChoice = (kind: string, p = 0.9) => () => ({
+  kind: { type: "choice", choice: kind, probabilities: { [kind]: p, unknown: 1 - p } },
+});
+
+test("a stalled turn Jev confidently calls over becomes the matching structured failure", async () => {
+  const jev = withJev(stallChoice("errored"));
+  restore = jev.restore;
+
+  const failure = await stalledTurnFailure(stalled({ overlayTexts: ["Hmm... something seems to have gone wrong."], answerTail: "x".repeat(1000) }));
+  expect(failure).toMatchObject({ status: 502, code: "upstream_server_error", retryable: true });
+  expect(failure?.message).toContain('ChatGPT showed: "Hmm... something seems to have gone wrong."');
+  const state = JSON.parse(jev.seen[0]!) as { answer_tail: string; seconds_without_completion: number; stop_button_visible: boolean };
+  expect(state.answer_tail).toHaveLength(400);
+  expect(state.seconds_without_completion).toBe(61);
+  expect(state.stop_button_visible).toBe(false);
+
+  restore();
+  restore = withJev(stallChoice("stopped_by_ui")).restore;
+  expect(await stalledTurnFailure(stalled({ statusTexts: ["Generazione interrotta"] }))).toMatchObject({ status: 502, code: "chatgpt_stopped_thinking" });
+
+  restore();
+  restore = withJev(stallChoice("rate_limited")).restore;
+  expect(await stalledTurnFailure(stalled())).toMatchObject({ status: 429, code: "rate_limit_exceeded", retryable: true });
+
+  restore();
+  restore = withJev(stallChoice("login_lost")).restore;
+  expect(await stalledTurnFailure(stalled({ running: true, overlayTexts: ["Log in or sign up"] }))).toMatchObject({ status: 401, code: "chatgpt_session_expired" });
+});
+
+test("still generating, doubt, a live stop button, or no judge all keep the turn waiting", async () => {
+  for (const answers of [stallChoice("still_generating"), stallChoice("unknown"), stallChoice("errored", 0.55)]) {
+    restore?.();
+    restore = withJev(answers).restore;
+    expect(await stalledTurnFailure(stalled({ statusTexts: ["Thinking"] }))).toBeUndefined();
+  }
+
+  restore?.();
+  restore = withJev(stallChoice("errored")).restore;
+  expect(await stalledTurnFailure(stalled({ running: true }))).toBeUndefined();
+
+  restore();
+  const off = withJev(stallChoice("errored"), false);
+  restore = off.restore;
+  expect(await stalledTurnFailure(stalled())).toBeUndefined();
+  expect(off.seen).toHaveLength(0);
+});
+
+const rootAnswers = (kinds: Record<string, [string, number?]>) => (questions: Record<string, unknown>) =>
+  Object.fromEntries(Object.keys(questions).map(key => {
+    const [kind, p = 0.9] = kinds[key] ?? ["intermediate_commentary"];
+    return [key, { type: "choice", choice: kind, probabilities: { [kind]: p, tool_status: 1 - p } }];
+  }));
+
+test("a finished turn without an answer root promotes the last commentary block Jev confidently calls the final answer", async () => {
+  const jev = withJev(rootAnswers({ root_0: ["final_answer"], root_1: ["intermediate_commentary"], root_2: ["final_answer"] }));
+  restore = jev.restore;
+  expect(await judgeAnswerRootPromotion(["Let me check the file.", "Running tests now.", "All 12 tests pass; the bug was the off-by-one in paginate()."]))
+    .toBe("All 12 tests pass; the bug was the off-by-one in paginate().");
+  expect(jev.seen).toHaveLength(1);
+  expect(JSON.parse(jev.seen[0]!)).toMatchObject({ turn_finished: true, blocks: [{ index: 0 }, { index: 1 }, { index: 2 }] });
+
+  // Only the newest blocks are judged, and empty text never reaches Jev.
+  restore();
+  const bounded = withJev(rootAnswers({ [`root_${MAX_PROMOTION_CANDIDATES - 1}`]: ["final_answer"] }));
+  restore = bounded.restore;
+  const many = Array.from({ length: MAX_PROMOTION_CANDIDATES + 3 }, (_, index) => `block ${index}`);
+  expect(await judgeAnswerRootPromotion([...many, "   "])).toBe(`block ${MAX_PROMOTION_CANDIDATES + 2}`);
+  expect(JSON.parse(bounded.seen[0]!).blocks).toHaveLength(MAX_PROMOTION_CANDIDATES);
+});
+
+test("doubt, non-answer verdicts, empty input, or no judge keep the empty-completion failure", async () => {
+  restore = withJev(rootAnswers({ root_0: ["final_answer", 0.6] })).restore;
+  expect(await judgeAnswerRootPromotion(["Almost done."])).toBeUndefined();
+
+  restore();
+  restore = withJev(rootAnswers({ root_0: ["tool_status"], root_1: ["embedded_ui_chrome"] })).restore;
+  expect(await judgeAnswerRootPromotion(["Searched the web", "Copy code"])).toBeUndefined();
+
+  restore();
+  const off = withJev(rootAnswers({ root_0: ["final_answer"] }), false);
+  restore = off.restore;
+  expect(await judgeAnswerRootPromotion(["The answer is 42."])).toBeUndefined();
+  expect(await judgeAnswerRootPromotion([])).toBeUndefined();
+  expect(off.seen).toHaveLength(0);
+});
+
+test("a promoted commentary block streams through the Markdown buffer as the completed answer", () => {
+  const buffer = new ChatGptMarkdownBuffer();
+  const text = "Done.\n\nThe fix is in `paginate()`: use <= instead of <.\nBoth callers & tests updated.";
+  const delta = buffer.observe([promotedAnswerSegment(text)]);
+  expect(delta).toBe("");
+  const final = buffer.finish();
+  expect(final.markdown).toBe(final.delta);
+  expect(final.markdown).toContain("Done.\n\n");
+  expect(final.markdown).toContain("use <= instead of <.");
+  expect(final.markdown).toContain("Both callers & tests updated.");
+});
+
+const loginPage = (text: string, url = "https://chatgpt.com/auth/login?next=%2F") => ({
+  url: () => url,
+  evaluate: async <T>(_fn: () => T) => text as unknown as T,
+});
+const loginChoice = (state: string, p = 0.9) => () => ({
+  state: { type: "choice", choice: state, probabilities: { [state]: p, unknown: 1 - p } },
+});
+
+test("a composer-less page gets a precise instruction for the screen Jev confidently recognises", async () => {
+  const jev = withJev(loginChoice("mfa_prompt"));
+  restore = jev.restore;
+  expect(await describeChatGptLoginState(loginPage("Enter the 6-digit code from your authenticator app  Resend code")))
+    .toContain("verification code");
+  // Query strings never reach Jev; the visible text does.
+  expect(JSON.parse(jev.seen[0]!)).toMatchObject({ url: "https://chatgpt.com/auth/login", page_text: "Enter the 6-digit code from your authenticator app Resend code" });
+
+  restore();
+  restore = withJev(loginChoice("passkey_only")).restore;
+  expect(await describeChatGptLoginState(loginPage("Use your passkey  Windows Hello"))).toContain("passkey");
+
+  restore();
+  restore = withJev(loginChoice("captcha_challenge")).restore;
+  expect(await describeChatGptLoginState(loginPage("Verify you are human"))).toContain("human-verification");
+
+  restore();
+  restore = withJev(loginChoice("composer_ready")).restore;
+  expect(await describeChatGptLoginState(loginPage("What can I help with?"))).toContain("DOM may have changed");
+});
+
+test("unknown, unsure, unreadable pages, or no judge leave the generic composer error alone", async () => {
+  restore = withJev(loginChoice("unknown")).restore;
+  expect(await describeChatGptLoginState(loginPage("Loading…"))).toBeUndefined();
+
+  restore();
+  restore = withJev(loginChoice("login_form", 0.6)).restore;
+  expect(await describeChatGptLoginState(loginPage("Log in  Sign up"))).toBeUndefined();
+
+  restore();
+  const jev = withJev(loginChoice("login_form"));
+  restore = jev.restore;
+  const unreadable = { url: () => { throw new Error("closed"); }, evaluate: async () => { throw new Error("closed"); } };
+  expect(await describeChatGptLoginState(unreadable as never)).toBeUndefined();
+  expect(jev.seen).toHaveLength(0);
+
+  restore();
+  const off = withJev(loginChoice("login_form"), false);
+  restore = off.restore;
+  expect(await describeChatGptLoginState(loginPage("Log in"))).toBeUndefined();
+  expect(off.seen).toHaveLength(0);
+});
+
+test("a judged account-limit dialog fails the turn with the clamp advice and holds concurrency at one turn", async () => {
+  expect(chatGptBrowserTabCeilingError(MAX_CHATGPT_BROWSER_TABS - 1)).toBeUndefined();
+  expect(chatGptBrowserTabCeilingError(MAX_CHATGPT_BROWSER_TABS)?.message).toContain(`at most ${MAX_CHATGPT_BROWSER_TABS}`);
+  expect(chatGptAccountLimitedUntil()).toBeUndefined();
+
+  restore = withJev(() => choice("account_temporarily_limited")).restore;
+  const failure = throwIfChatGptJudgedFailureDialog(fakePage(["Our systems have detected unusual activity. Your account is temporarily limited."]));
+  await expect(failure).rejects.toMatchObject({ status: 429, code: "account_temporarily_limited", retryable: false });
+  await expect(failure).rejects.toThrow("max_concurrent_threads_per_session = 1");
+
+  const now = Date.now();
+  expect(chatGptAccountLimitedUntil(now)).toBeGreaterThan(now);
+  expect(chatGptBrowserTabCeilingError(0, now)).toBeUndefined();
+  const clamped = chatGptBrowserTabCeilingError(1, now);
+  expect(clamped?.message).toContain("one browser turn at a time");
+  expect(clamped?.message).toContain("[agents]");
+  // The cooldown clears on its own and a repeat report extends it rather than shortening it.
+  expect(chatGptBrowserTabCeilingError(1, now + CHATGPT_ACCOUNT_LIMIT_COOLDOWN_MS)).toBeUndefined();
+  noteChatGptAccountLimited(now + 60_000);
+  expect(chatGptAccountLimitedUntil(now + CHATGPT_ACCOUNT_LIMIT_COOLDOWN_MS)).toBe(now + 60_000 + CHATGPT_ACCOUNT_LIMIT_COOLDOWN_MS);
+});
+
+test("ordinary rate-limit dialogs never engage the account-limit clamp", async () => {
+  restore = withJev(() => choice("rate_limit")).restore;
+  await expect(throwIfChatGptJudgedFailureDialog(fakePage(["Too many requests. Please slow down."]))).rejects.toMatchObject({ status: 429, retryable: true });
+  expect(chatGptAccountLimitedUntil()).toBeUndefined();
+  expect(chatGptBrowserTabCeilingError(2)).toBeUndefined();
 });

@@ -11,6 +11,7 @@ import {
   detectChatGptAccountCapabilities,
 } from "./chatgpt-session";
 import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
+import { describeChatGptLoginState } from "./adapters/chatgpt-web/ui-judgments";
 
 export interface BrowserLoginResult {
   storageStatePath: string;
@@ -167,7 +168,13 @@ async function inspectStoredState(
     try {
       const verifierPage = await verifierContext.newPage();
       await verifierPage.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-      await verifierPage.getByRole("textbox", { name: "Chat with ChatGPT" }).waitFor({ state: "visible", timeout: 60_000 });
+      try {
+        await verifierPage.getByRole("textbox", { name: "Chat with ChatGPT" }).waitFor({ state: "visible", timeout: 60_000 });
+      } catch (error) {
+        const guidance = await describeChatGptLoginState(verifierPage);
+        if (!guidance) throw error;
+        throw new Error(`The stored ChatGPT login did not reach the chat composer. ${guidance}`);
+      }
       await assertAuthenticatedChatGptPage(verifierPage);
       await assertTemporaryChatPage(verifierPage);
       return { ...await detectChatGptAccountCapabilities(verifierPage), url: verifierPage.url() };
@@ -416,7 +423,8 @@ export async function loginToChatGpt(
     try {
       await composer.waitFor({ state: "visible", timeout: options.timeoutMs ?? 60_000 });
     } catch {
-      throw new Error("The authenticated ChatGPT page did not produce a visible composer");
+      const guidance = await describeChatGptLoginState(page);
+      throw new Error(`The authenticated ChatGPT page did not produce a visible composer${guidance ? `. ${guidance}` : ""}`);
     }
     await assertAuthenticatedChatGptPage(page);
     await assertTemporaryChatPage(page);

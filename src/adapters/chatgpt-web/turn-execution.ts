@@ -8,7 +8,7 @@ import {
   extractChatGptTurnIdentity,
   extractChatGptTurnUserRevision,
 } from "./environment";
-import { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
+import { chatGptBrowserTabCeilingError } from "./concurrency";
 import type { ChatGptExternalTurnProgress } from "./turn-progress";
 
 function awaitWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -522,11 +522,8 @@ export class ChatGptTurnSessions {
       return existing;
     }
     const active = [...this.entries.values()].filter(session => session.isActive()).length;
-    if (active >= MAX_CHATGPT_BROWSER_TABS) {
-      throw new Error(
-        `ChatGPT Web supports at most ${MAX_CHATGPT_BROWSER_TABS} simultaneous browser turns; close or finish a browser tab before starting another`,
-      );
-    }
+    const ceilingError = chatGptBrowserTabCeilingError(active);
+    if (ceilingError) throw ceilingError;
     if (this.entries.size >= this.maxEntries) throw new Error(`ChatGPT web session registry is full (${this.maxEntries} entries)`);
     const session = new ChatGptTurnSession(start(), traceId, ownerKey, nativeTurnId, nativeThreadId, instruction);
     this.entries.set(key, session);

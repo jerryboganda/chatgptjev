@@ -16,7 +16,14 @@ import {
 } from "../../config";
 import { estimateTokens } from "../../lib/token-estimate";
 import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
-import { learnStoppedThinkingLabels, learnedStoppedThinkingLabels, throwIfChatGptJudgedFailureDialog } from "./ui-judgments";
+import {
+  judgeAnswerRootPromotion,
+  learnStoppedThinkingLabels,
+  learnedStoppedThinkingLabels,
+  stalledTurnFailure,
+  throwIfChatGptJudgedFailureDialog,
+  visibleChatGptDialogTexts,
+} from "./ui-judgments";
 import type { CodexProviderConfig } from "../../types";
 import { parseDataUrl } from "../image";
 import {
@@ -77,7 +84,7 @@ import {
   resolveChatGptWebTransportLimits,
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
-import { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
+import { chatGptBrowserTabCeilingError } from "./concurrency";
 import {
   ChatGptCompactionHandoffAccepted,
   ChatGptWebAdapterError,
@@ -1480,6 +1487,16 @@ export class ChatGptCompletionTracker {
   }
 }
 
+export const CHATGPT_EMPTY_COMPLETION_MESSAGE = "ChatGPT browser turn completed without a final answer";
+
+/** Plain commentary text as a single Markdown segment (item 5 promotion): paragraphs stay paragraphs. */
+export function promotedAnswerSegment(text: string): ChatGptMarkdownSegment {
+  const escape = (value: string): string => value
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = text.split(/\n{2,}/).map(paragraph => `<p>${escape(paragraph).replace(/\n/g, "<br>")}</p>`).join("");
+  return { key: "jev:promoted", tag: "root", html, text, streamable: false };
+}
+
 export class ChatGptTurnDomHealthTracker {
   private sawResponse = false;
   private missingResponseSince?: number;
@@ -1540,7 +1557,7 @@ export class ChatGptTurnDomHealthTracker {
     } else {
       this.emptyCompletionSince ??= now;
       if (now - this.emptyCompletionSince >= this.emptyCompletionMs) {
-        return "ChatGPT browser turn completed without a final answer";
+        return CHATGPT_EMPTY_COMPLETION_MESSAGE;
       }
     }
 
@@ -1567,6 +1584,10 @@ export class ChatGptTurnDomHealthTracker {
  * exhausting it fails closed with the original fault as the cause.
  */
 export const MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS = 8;
+
+/** First stalled-turn diagnostic + Jev verdict after this long without completion, then periodically. */
+export const CHATGPT_STALL_FIRST_CHECK_MS = 60_000;
+export const CHATGPT_STALL_JUDGE_INTERVAL_MS = 90_000;
 
 /**
  * How stale recorded MCP progress may be and still suppress DOM health checks.
@@ -2186,11 +2207,8 @@ export class ChatGptBrowserWorker {
     if (this.activeRuns.has(turn.traceId)) {
       return Promise.reject(new Error(`Duplicate ChatGPT web browser turn: ${turn.traceId}`));
     }
-    if (this.activeRuns.size >= MAX_CHATGPT_BROWSER_TABS) {
-      return Promise.reject(new Error(
-        `ChatGPT Web supports at most ${MAX_CHATGPT_BROWSER_TABS} simultaneous browser turns; close or finish a browser tab before starting another`,
-      ));
-    }
+    const ceilingError = chatGptBrowserTabCeilingError(this.activeRuns.size);
+    if (ceilingError) return Promise.reject(ceilingError);
     const useHelper = this.config.browserHost === "launcher" && process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS !== "1";
     if (useHelper) {
       this.launcherHelper ??= new LauncherBrowserHelperClient(this.config);
@@ -4836,6 +4854,7 @@ export class ChatGptBrowserWorker {
       let finalText = "";
       let sawRunning = false;
       let loggedCompletionWait = false;
+      let nextStallCheckMs = CHATGPT_STALL_FIRST_CHECK_MS;
       let capturedResponse = false;
       const sentAt = Date.now();
       const visibleTrace = new ChatGptVisibleTraceTracker();
@@ -4860,6 +4879,28 @@ export class ChatGptBrowserWorker {
           code: "browser_stream_inconsistent",
           retryable: false,
         });
+      };
+      const completeTurn = (visibleText: string): void => {
+        const final = (() => {
+          try {
+            return markdownBuffer.finish();
+          } catch (error) {
+            return throwMarkdownConsistencyError(error);
+          }
+        })();
+        if (!final.markdown && visibleText) {
+          throw new Error("ChatGPT completed with visible text that could not be serialized as Markdown");
+        }
+        if (final.delta) emitMarkdownDelta(final.delta);
+        if (checkpointStream) {
+          const completed = checkpointStream.finishOptional(visibleText);
+          if (completed.visibleRemainder) turn.onTextDelta(completed.visibleRemainder);
+          if (completed.captured) turn.onLunaCheckpoint!(completed.captured);
+          else console.warn(`[chatgpt-web] browser turn ${turn.traceId} completed without a Luna rolling checkpoint; preserving full native history`);
+          finalText = completed.answer;
+        } else {
+          finalText = final.markdown;
+        }
       };
       const domHealthTracker = new ChatGptTurnDomHealthTracker();
       const responseDomCache: ChatGptResponseDomCache = {};
@@ -5004,6 +5045,20 @@ export class ChatGptBrowserWorker {
             completionActionVisible: snapshot.completionActionVisible,
             externalProgressLive,
           });
+          if (domError === CHATGPT_EMPTY_COMPLETION_MESSAGE) {
+            // Item 5: the DOM rule found no answer root in a finished turn. Before failing, let Jev
+            // decide whether one of the commentary Markdown blocks is really the final answer.
+            const promoted = await judgeAnswerRootPromotion(
+              snapshot.traceBlocks.filter(block => block.kind === "commentary" && !block.uiControl).map(block => block.text),
+            ).catch(() => undefined);
+            if (promoted) {
+              console.warn(`[chatgpt-web] browser turn ${turn.traceId} had no answer root; Jev promoted a commentary block to the final answer`);
+              await diagnostics.capture(page, "response-promoted-commentary");
+              markdownBuffer.observe([promotedAnswerSegment(promoted)]);
+              completeTurn(promoted);
+              break;
+            }
+          }
           if (domError) throw new Error(domError);
           const completionReady = completionTracker.update({
             responsePresent: snapshot.responsePresent,
@@ -5042,37 +5097,36 @@ export class ChatGptBrowserWorker {
             if (snapshot.visibleText === "api_tool unavailable") {
               throw new Error("ChatGPT selected mode rejected the Codex Native MCP tool (api_tool unavailable)");
             }
-            const final = (() => {
-              try {
-                return markdownBuffer.finish();
-              } catch (error) {
-                return throwMarkdownConsistencyError(error);
-              }
-            })();
-            if (!final.markdown && snapshot.visibleText) {
-              throw new Error("ChatGPT completed with visible text that could not be serialized as Markdown");
-            }
-            if (final.delta) emitMarkdownDelta(final.delta);
-            if (checkpointStream) {
-              const completed = checkpointStream.finishOptional(snapshot.visibleText);
-              if (completed.visibleRemainder) turn.onTextDelta(completed.visibleRemainder);
-              if (completed.captured) turn.onLunaCheckpoint!(completed.captured);
-              else console.warn(`[chatgpt-web] browser turn ${turn.traceId} completed without a Luna rolling checkpoint; preserving full native history`);
-              finalText = completed.answer;
-            } else {
-              finalText = final.markdown;
-            }
+            completeTurn(snapshot.visibleText);
             break;
           }
-          if (!loggedCompletionWait && Date.now() - sentAt >= 60_000) {
-            loggedCompletionWait = true;
-            await diagnostics.capture(page, "response-stalled-60s");
-            const diagnostic = await this.stalledTurnDiagnostic(page, responseTurn.locator).catch(error => JSON.stringify({
-              diagnosticError: error instanceof Error ? error.message : String(error),
-            }));
-            console.warn(
-              `[chatgpt-web] waiting for completed-turn evidence (running=${running}, sawRunning=${sawRunning}, textChars=${snapshot.visibleText.length}, completionActionVisible=${snapshot.completionActionVisible}, ui=${diagnostic})`,
-            );
+          const stalledMs = Date.now() - sentAt;
+          if (stalledMs >= nextStallCheckMs) {
+            nextStallCheckMs = stalledMs + CHATGPT_STALL_JUDGE_INTERVAL_MS;
+            if (!loggedCompletionWait) {
+              loggedCompletionWait = true;
+              await diagnostics.capture(page, "response-stalled-60s");
+              const diagnostic = await this.stalledTurnDiagnostic(page, responseTurn.locator).catch(error => JSON.stringify({
+                diagnosticError: error instanceof Error ? error.message : String(error),
+              }));
+              console.warn(
+                `[chatgpt-web] waiting for completed-turn evidence (running=${running}, sawRunning=${sawRunning}, textChars=${snapshot.visibleText.length}, completionActionVisible=${snapshot.completionActionVisible}, ui=${diagnostic})`,
+              );
+            }
+            // Item 6: ask Jev what the stalled turn is doing. Only a confident terminal verdict
+            // ends the turn; "still generating" and doubt keep waiting exactly as before.
+            const stallFailure = await stalledTurnFailure({
+              elapsedSec: stalledMs / 1000,
+              running,
+              completionActionVisible: snapshot.completionActionVisible,
+              statusTexts: snapshot.traceBlocks.filter(block => block.kind === "status").map(block => block.text),
+              overlayTexts: await visibleChatGptDialogTexts(page, '[role="alert"], [role="dialog"], [role="status"]'),
+              answerTail: snapshot.visibleText,
+            }).catch(() => undefined);
+            if (stallFailure) {
+              await diagnostics.capture(page, "response-stalled-judged");
+              throw stallFailure;
+            }
           }
         } else {
           const domError = domHealthTracker.update({
