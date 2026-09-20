@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, execFile } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { redactText } = require("./logging.cjs");
 const {
@@ -14,6 +14,7 @@ const { runtimeInvocation } = require("./runtime-command.cjs");
 
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_PER_WINDOW = 5;
+const CRASH_TRIAGE_TIMEOUT_MS = 10_000;
 const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
 const MAX_CONTROL_OUTPUT_BYTES = 1024 * 1024;
 const DRAIN_IDLE_TIMEOUT_MS = 15_000;
@@ -329,6 +330,7 @@ class RuntimeSupervisor {
     launcherProfile = "production",
     publishOperation,
     runtimeInvocationFactory = runtimeInvocation,
+    classifyCrashLoop = undefined,
   }) {
     this.app = app;
     this.logger = logger;
@@ -343,6 +345,11 @@ class RuntimeSupervisor {
     this.launcherProfile = launcherProfile;
     this.publishOperation = publishOperation;
     this.runtimeInvocationFactory = runtimeInvocationFactory;
+    // Item 19: Jev names the crash kind through the runtime CLI; tests inject a fake (or `null` to
+    // disable), and without a gateway key in this process there is nothing the runtime could ask.
+    this.classifyCrashLoop = classifyCrashLoop !== undefined
+      ? classifyCrashLoop
+      : (process.env.AI_GATEWAY_API_KEY ? (input) => this.runCrashTriage(input) : null);
     this.configPath = path.join(coreHome, "config.json");
     this.statePath = path.join(coreHome, "runtime", "launcher-supervisor.json");
     this.daemon = null;
@@ -1300,6 +1307,51 @@ class RuntimeSupervisor {
     return recent.length;
   }
 
+  /** Item 19: the deterministic give-up message is published first; a confident Jev verdict appends the fix. */
+  publishCrashTriage(name, cause, restarts, message) {
+    if (!this.classifyCrashLoop) return;
+    const triage = Promise.resolve()
+      .then(() => this.classifyCrashLoop({ child: name, lastFailure: cause, restarts }))
+      .then((verdict) => {
+        if (!verdict || typeof verdict.kind !== "string" || typeof verdict.fix !== "string") return;
+        if (this.stopping || this.restartTimers[name] || this[name]) return;
+        const hinted = `${message}. Jev: this looks like ${verdict.kind.replace(/_/g, " ")}. ${verdict.fix}`;
+        this.logger.info(`runtime.${name}_crash_triaged`, { kind: verdict.kind });
+        this.tryWriteState("failed", hinted);
+        this.publishOperation?.({ name: "runtime-recovery", status: "failed", message: hinted });
+      })
+      .catch((error) => {
+        this.logger.warn(`runtime.${name}_crash_triage_failed`, { message: errorMessage(error) });
+      });
+    this.recoveryTasks.add(triage);
+    void triage.finally(() => this.recoveryTasks.delete(triage));
+  }
+
+  runCrashTriage({ child, lastFailure, restarts }) {
+    const invocation = this.runtimeCommand([
+      "triage-crash", "--child", child, "--failure", lastFailure, "--restarts", String(restarts),
+    ]);
+    return new Promise((resolve, reject) => {
+      execFile(invocation.executable, invocation.args, {
+        cwd: invocation.cwd,
+        env: process.env,
+        timeout: CRASH_TRIAGE_TIMEOUT_MS,
+        windowsHide: true,
+        maxBuffer: 64 * 1024,
+      }, (error, stdout) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        try {
+          resolve(JSON.parse(String(stdout).trim() || "{}"));
+        } catch (parseError) {
+          reject(parseError);
+        }
+      });
+    });
+  }
+
   scheduleRecovery(name) {
     if (this.stopping) return;
     if (this.restartTimers[name]) return;
@@ -1310,6 +1362,7 @@ class RuntimeSupervisor {
         + (cause ? `; last failure: ${cause}` : "");
       this.tryWriteState("failed", message);
       this.publishOperation?.({ name: "runtime-recovery", status: "failed", message });
+      if (cause) this.publishCrashTriage(name, cause, attempts, message);
       return;
     }
     const delay = Math.min(attempts * 1_000, 5_000);

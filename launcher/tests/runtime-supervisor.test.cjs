@@ -1261,6 +1261,7 @@ test("crash-loop diagnostics include the last redacted child failure", () => {
     coreHome: root,
     browserDescriptorPath: path.join(root, "launcher.json"),
     publishOperation: operation => operations.push(operation),
+    classifyCrashLoop: null,
   });
   supervisor.restartHistory.tunnel = Array.from(
     { length: MAX_RESTARTS_PER_WINDOW },
@@ -1273,6 +1274,67 @@ test("crash-loop diagnostics include the last redacted child failure", () => {
     assert.equal(failure.status, "failed");
     assert.match(failure.message, /automatic restart is disabled/);
     assert.match(failure.message, /last failure: tunnel exited \(1\): invalid profile for \[tunnel-id\]/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("crash-loop give-up publishes the deterministic message first and appends a confident Jev verdict", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-crash-loop-triage-"));
+  const operations = [];
+  const asked = [];
+  const supervisor = new RuntimeSupervisor({
+    app: { getVersion: () => "0.2.0", isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: root,
+    coreHome: root,
+    browserDescriptorPath: path.join(root, "launcher.json"),
+    publishOperation: operation => operations.push(operation),
+    classifyCrashLoop: async (input) => {
+      asked.push(input);
+      return { kind: "port_in_use", fix: "Close the other program using the port." };
+    },
+  });
+  supervisor.restartHistory.daemon = Array.from({ length: MAX_RESTARTS_PER_WINDOW }, () => Date.now());
+  supervisor.lastChildFailure.daemon = "daemon exited (1): EADDRINUSE 127.0.0.1:8123";
+  try {
+    supervisor.scheduleRecovery("daemon");
+    assert.equal(operations.length, 1);
+    assert.match(operations[0].message, /automatic restart is disabled; last failure: daemon exited \(1\): EADDRINUSE/);
+    await Promise.all([...supervisor.recoveryTasks]);
+    assert.deepEqual(asked, [{ child: "daemon", lastFailure: "daemon exited (1): EADDRINUSE 127.0.0.1:8123", restarts: MAX_RESTARTS_PER_WINDOW + 1 }]);
+    assert.equal(operations.length, 2);
+    assert.equal(operations[1].status, "failed");
+    assert.match(operations[1].message, /^daemon stopped more than 5 times in 60 seconds; automatic restart is disabled; last failure: daemon exited \(1\): EADDRINUSE 127\.0\.0\.1:8123\. Jev: this looks like port in use\. Close the other program using the port\.$/);
+    const state = JSON.parse(fs.readFileSync(path.join(root, "runtime", "launcher-supervisor.json"), "utf8"));
+    assert.equal(state.status, "failed");
+    assert.match(state.detail, /Jev: this looks like port in use/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("crash-loop triage that is unsure, failing, or disabled leaves the give-up message untouched", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-crash-loop-no-triage-"));
+  try {
+    for (const classifyCrashLoop of [async () => ({}), async () => { throw new Error("gateway down"); }, null]) {
+      const operations = [];
+      const supervisor = new RuntimeSupervisor({
+        app: { getVersion: () => "0.2.0", isPackaged: false },
+        logger: { info() {}, warn() {}, error() {} },
+        sourceRoot: root,
+        coreHome: root,
+        browserDescriptorPath: path.join(root, "launcher.json"),
+        publishOperation: operation => operations.push(operation),
+        classifyCrashLoop,
+      });
+      supervisor.restartHistory.tunnel = Array.from({ length: MAX_RESTARTS_PER_WINDOW }, () => Date.now());
+      supervisor.lastChildFailure.tunnel = "tunnel exited (1): boom";
+      supervisor.scheduleRecovery("tunnel");
+      await Promise.all([...supervisor.recoveryTasks]);
+      assert.equal(operations.length, 1);
+      assert.doesNotMatch(operations[0].message, /Jev:/);
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

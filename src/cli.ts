@@ -21,6 +21,7 @@ import {
   uninstallCodexIntegration,
 } from "./codex-integration";
 import { formatDoctorReport, runDoctor } from "./doctor";
+import { classifyCrashLoop } from "./crash-judgments";
 import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
 import { runCommand } from "./process";
 import { startServer } from "./server";
@@ -371,6 +372,18 @@ async function doctorCommand(args: string[]): Promise<void> {
   if (!report.ok) process.exitCode = 1;
 }
 
+/** Hidden: the launcher supervisor asks Jev why a child keeps crashing. Prints `{}` when Jev is unsure or off. */
+async function triageCrashCommand(args: string[]): Promise<void> {
+  const child = takeOption(args, "--child");
+  const lastFailure = takeOption(args, "--failure");
+  const restarts = Number(takeOption(args, "--restarts") ?? "0");
+  assertNoArgs(args);
+  if (child !== "daemon" && child !== "tunnel") throw new Error("--child must be daemon or tunnel");
+  if (!lastFailure) throw new Error("--failure is required");
+  const verdict = await classifyCrashLoop({ child, lastFailure, restarts: Number.isFinite(restarts) ? restarts : 0 });
+  stdout.write(`${JSON.stringify(verdict ?? {})}\n`);
+}
+
 async function routeCommand(args: string[]): Promise<void> {
   const action = args.shift() ?? "status";
   assertNoArgs(args);
@@ -562,6 +575,7 @@ async function main(): Promise<void> {
   else if (command === "setup") await setupCommand(args);
   else if (command === "login") await loginCommand(args);
   else if (command === "doctor" || command === "status") await doctorCommand(args);
+  else if (command === "triage-crash") await triageCrashCommand(args);
   else if (command === "route") await routeCommand(args);
   else if (command === "subagents") await subagentsCommand(args);
   else if (command === "browser") {
