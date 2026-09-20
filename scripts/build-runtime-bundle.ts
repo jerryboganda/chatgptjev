@@ -94,7 +94,7 @@ const bunName = process.platform === "win32" ? "bun.exe" : "bun";
 cpSync(embeddedBunExecutable(), join(runtimeDir, bunName));
 if (process.platform !== "win32") chmodSync(join(runtimeDir, bunName), 0o755);
 
-const launcherName = process.platform === "win32" ? "codex-chatgpt-web.cmd" : "codex-chatgpt-web";
+const launcherName = process.platform === "win32" ? "chatgpt-jev.cmd" : "chatgpt-jev";
 const launcher = process.platform === "win32" ? `@echo off
 setlocal
 chcp 65001 >nul

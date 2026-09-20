@@ -58,7 +58,7 @@ test("Responses Lite native exec survives a complete server request as one custo
   config.solAvailable = false;
   config.proAvailable = false;
   const turnId = "turn_responses_lite_exec_regression";
-  const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+  const response = await responseRequest(new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({

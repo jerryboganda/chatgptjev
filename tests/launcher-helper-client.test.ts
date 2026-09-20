@@ -61,14 +61,14 @@ test("daemon streams browser lifecycle through the real helper process", async (
       token: "launcher-control-token-0123456789abcdefghijklmnop",
     },
     helper: { executable: process.execPath, script: descriptorHelper },
-    partition: "persist:codex-web-gpt-chatgpt",
+    partition: "persist:chatgpt-jev-chatgpt",
     idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB",
     surfaceTargets: { ["launcher_surface_id_0123456789AB"]: "native-owned-target" },
     createdAt: new Date().toISOString(),
   })}\n`, { mode: 0o600 });
   const config: ResolvedBrowserConfig = {
-    appName: "Codex Native2",
+    appName: "Codex Jev",
     browserHost: "launcher",
     browserHostDescriptorPath: descriptorPath,
     browserHelperScriptPath: helper,
@@ -176,12 +176,12 @@ test("accepted compaction retires through the helper as completed without hiding
     endpoint: `http://127.0.0.1:${server.port}`,
     control: { endpoint: `http://127.0.0.1:${server.port}`, token: "launcher-control-token-0123456789abcdefghijklmnop" },
     helper: { executable: process.execPath, script: helper },
-    partition: "persist:codex-web-gpt-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
+    partition: "persist:chatgpt-jev-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB", createdAt: new Date().toISOString(),
     surfaceTargets: { launcher_surface_id_0123456789AB: "native-owned-target" },
   }), { mode: 0o600 });
   const client = new LauncherBrowserHelperClient({
-    appName: "Codex Native2", browserHost: "launcher", browserHostDescriptorPath: descriptorPath,
+    appName: "Codex Jev", browserHost: "launcher", browserHostDescriptorPath: descriptorPath,
     browserHelperScriptPath: helper, browserDiagnosticsPath: join(root, "diagnostics"),
     storageStatePath: join(root, "unused-state.json"), chromeExecutablePath: join(root, "unused-chrome"),
     turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
@@ -229,7 +229,7 @@ test("accepted compaction retires through the helper as completed without hiding
 test("launcher helper protocol preserves multipart context and the compaction flag", async () => {
   const sent: Record<string, unknown>[] = [];
   const client = new LauncherBrowserHelperClient({
-    appName: "Codex Native2 DEV",
+    appName: "Codex Jev DEV",
     browserHost: "launcher",
     browserHostDescriptorPath: "/durable/launcher.json",
     storageStatePath: "/durable/unused-state.json",
@@ -408,7 +408,7 @@ test("structured helper errors preserve the ChatGPT adapter failure contract", a
 
 test("an older helper cannot silently drop selected skill files and releases the prepared turn", async () => {
   const client = new LauncherBrowserHelperClient({
-    appName: "Codex Native2", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
+    appName: "Codex Jev", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
     storageStatePath: "/durable/unused.json", chromeExecutablePath: "/durable/chrome", headed: true, autoApproveToolCalls: false,
   });
   const internal = client as unknown as {

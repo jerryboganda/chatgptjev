@@ -19,9 +19,9 @@ export type SubagentProtocol = "compatibility-v1" | "native";
  * ChatGPT caches a connector's public MCP contract by connector identity. The direct turn-token
  * contract therefore has a new identity instead of mutating the retired connector in place.
  */
-export const CHATGPT_CONNECTOR_NAME = "Codex Native2";
+export const CHATGPT_CONNECTOR_NAME = "Codex Jev";
 export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
-export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk";
+export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Jev Zero Risk";
 export const LEGACY_CHATGPT_CONNECTOR_NAMES = ["Codex Native"] as const;
 
 export function isLegacyChatGptConnectorName(value: string): boolean {
@@ -118,8 +118,8 @@ export function expandUserPath(value: string): string {
 }
 
 export function getConfigDir(): string {
-  const configured = process.env.CODEX_CHATGPT_WEB_HOME?.trim();
-  return resolve(expandUserPath(configured || join(homedir(), ".codex-chatgpt-web")));
+  const configured = process.env.CHATGPT_JEV_HOME?.trim();
+  return resolve(expandUserPath(configured || join(homedir(), ".chatgpt-jev")));
 }
 
 export function getConfigPath(): string {
@@ -133,7 +133,7 @@ export function isWindowsPipeEndpoint(value: string): boolean {
 export function defaultBrokerEndpoint(home = getConfigDir(), platform = process.platform): string {
   if (platform !== "win32") return join(home, "runtime", "turn-broker.sock");
   const identity = createHash("sha256").update(resolve(home).toLowerCase()).digest("hex").slice(0, 20);
-  return `\\\\.\\pipe\\codex-chatgpt-web-${identity}`;
+  return `\\\\.\\pipe\\chatgpt-jev-${identity}`;
 }
 
 export function resolveBrokerEndpoint(value: string): string {
@@ -200,7 +200,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     mode,
     subagentProtocol: "compatibility-v1",
     host: "127.0.0.1",
-    port: 17841,
+    port: 17851,
     contextWindow: 256_000,
     appName: CHATGPT_CONNECTOR_NAME,
     automaticAppName: CHATGPT_CONNECTOR_NAME,
@@ -341,13 +341,13 @@ export function defaultChromeExecutable(
 
 export function loadConfig(): AppConfig {
   const path = getConfigPath();
-  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-chatgpt-web setup first.`);
+  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run chatgpt-jev setup first.`);
   return parseConfig(JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))), path);
 }
 
 export function loadConfigForSetup(): AppConfig {
   const path = getConfigPath();
-  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-chatgpt-web setup first.`);
+  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run chatgpt-jev setup first.`);
   const raw = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
   if (raw.version === 1 && raw.mode === "pro-only") {
     raw.version = 2;

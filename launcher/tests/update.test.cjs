@@ -17,7 +17,7 @@ const {
 test("Linux auto-update fails closed without the stable installer wrapper", () => {
   const previousAppImage = process.env.CODEX_WEB_GPT_APPIMAGE;
   const previousWrapper = process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
-  process.env.CODEX_WEB_GPT_APPIMAGE = "/opt/codex/Codex Web GPT.AppImage";
+  process.env.CODEX_WEB_GPT_APPIMAGE = "/opt/codex/ChatGPT Jev.AppImage";
   delete process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
   try {
     assert.throws(() => buildJob({
@@ -42,10 +42,10 @@ test("release comparison and platform assets are strict", () => {
   assert.equal(compareVersions("1.1.4", "1.1.4"), 0);
   assert.equal(compareVersions("1.1.3", "1.1.4"), -1);
   assert.equal(compareVersions("1.2.0", "1.1.99"), 1);
-  assert.equal(releaseAssetName("1.2.0", "darwin", "arm64"), "codex-web-gpt-1.2.0-mac-arm64.zip");
-  assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), "codex-web-gpt-1.2.0-mac-x64.zip");
-  assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "codex-web-gpt-1.2.0-win-x64.exe");
-  assert.equal(releaseAssetName("1.2.0", "linux", "x64"), "codex-web-gpt-1.2.0-linux-x64.AppImage");
+  assert.equal(releaseAssetName("1.2.0", "darwin", "arm64"), "chatgpt-jev-1.2.0-mac-arm64.zip");
+  assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), "chatgpt-jev-1.2.0-mac-x64.zip");
+  assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "chatgpt-jev-1.2.0-win-x64.exe");
+  assert.equal(releaseAssetName("1.2.0", "linux", "x64"), "chatgpt-jev-1.2.0-linux-x64.AppImage");
   assert.equal(releaseAssetName("1.2.0", "linux", "arm64"), null);
 });
 
@@ -69,10 +69,10 @@ test("checksums and release URLs bind the exact expected asset", () => {
 
 test("macOS bundle resolution never guesses outside Contents/MacOS", () => {
   assert.equal(
-    macApplicationPath("/Applications/Codex Web GPT.app/Contents/MacOS/Codex Web GPT"),
-    "/Applications/Codex Web GPT.app",
+    macApplicationPath("/Applications/ChatGPT Jev.app/Contents/MacOS/ChatGPT Jev"),
+    "/Applications/ChatGPT Jev.app",
   );
-  assert.throws(() => macApplicationPath("/tmp/Codex Web GPT"), /Could not resolve/);
+  assert.throws(() => macApplicationPath("/tmp/ChatGPT Jev"), /Could not resolve/);
 });
 
 test("startup check runs once and exposes only a newer complete release", async () => {
@@ -94,8 +94,8 @@ test("startup check runs once and exposes only a newer complete release", async 
           tag_name: "v1.2.0",
           assets: [
             {
-              name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+              name: "chatgpt-jev-1.2.0-linux-x64.AppImage",
+              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/chatgpt-jev-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
@@ -114,8 +114,8 @@ test("startup check runs once and exposes only a newer complete release", async 
 
 test("verified update is handed to one detached worker", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-update-test-"));
-  const oldAppImage = path.join(root, "versions", "1.1.4", "Codex Web GPT.AppImage");
-  const wrapper = path.join(root, "bin", "codex-web-gpt");
+  const oldAppImage = path.join(root, "versions", "1.1.4", "ChatGPT Jev.AppImage");
+  const wrapper = path.join(root, "bin", "chatgpt-jev");
   fs.mkdirSync(path.dirname(oldAppImage), { recursive: true });
   fs.mkdirSync(path.dirname(wrapper), { recursive: true });
   fs.writeFileSync(oldAppImage, "old");
@@ -141,8 +141,8 @@ test("verified update is handed to one detached worker", async () => {
           tag_name: "v1.2.0",
           assets: [
             {
-              name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+              name: "chatgpt-jev-1.2.0-linux-x64.AppImage",
+              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/chatgpt-jev-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
@@ -150,7 +150,7 @@ test("verified update is handed to one detached worker", async () => {
             },
           ],
         }),
-        downloadText: async () => `${hash}  codex-web-gpt-1.2.0-linux-x64.AppImage\n`,
+        downloadText: async () => `${hash}  chatgpt-jev-1.2.0-linux-x64.AppImage\n`,
         downloadFile: async (_url, destination) => fs.writeFileSync(destination, assetBody),
         sha256: (filePath) => require("node:crypto").createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
         spawnWorker: (runtime, worker, job) => {
@@ -186,9 +186,9 @@ test("detached worker replaces an installed Linux AppImage and removes the old v
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-worker-test-"));
   const jobRoot = path.join(root, "job");
   const versionsRoot = path.join(root, "versions");
-  const oldTarget = path.join(versionsRoot, "1.1.4", "Codex Web GPT.AppImage");
-  const newTarget = path.join(versionsRoot, "1.2.0", "Codex Web GPT.AppImage");
-  const wrapper = path.join(root, "bin", "codex-web-gpt");
+  const oldTarget = path.join(versionsRoot, "1.1.4", "ChatGPT Jev.AppImage");
+  const newTarget = path.join(versionsRoot, "1.2.0", "ChatGPT Jev.AppImage");
+  const wrapper = path.join(root, "bin", "chatgpt-jev");
   const marker = path.join(root, "launched");
   const source = path.join(jobRoot, "update.AppImage");
   const runnerSource = path.join(jobRoot, "run-appimage");
@@ -220,7 +220,7 @@ test("detached worker replaces an installed Linux AppImage and removes the old v
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.existsSync(newTarget), true);
     assert.equal(fs.existsSync(path.dirname(oldTarget)), false);
-    assert.match(fs.readFileSync(wrapper, "utf8"), /versions\/1\.2\.0\/Codex Web GPT\.AppImage/);
+    assert.match(fs.readFileSync(wrapper, "utf8"), /versions\/1\.2\.0\/ChatGPT Jev\.AppImage/);
     assert.doesNotMatch(fs.readFileSync(wrapper, "utf8"), /APPIMAGE_EXTRACT_AND_RUN/);
     assert.equal(fs.existsSync(path.join(versionsRoot, "run-appimage")), true);
     const deadline = Date.now() + 3_000;

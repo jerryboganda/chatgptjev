@@ -4,8 +4,8 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { expandUserPath } from "./config";
 import { processRunning } from "./process";
 
-export const LAUNCHER_BROWSER_HOST_KIND = "codex-web-gpt-launcher";
-export const LAUNCHER_BROWSER_IDLE_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
+export const LAUNCHER_BROWSER_HOST_KIND = "chatgpt-jev-launcher";
+export const LAUNCHER_BROWSER_IDLE_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#chatgpt-jev-browser-host";
 export type LauncherBrowserHostProfile = "production" | "development";
 
 export class LauncherBrowserTurnCancelledError extends Error {
@@ -112,8 +112,8 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     throw new Error("Launcher browser descriptor helper script does not exist");
   }
   const expectedPartition = descriptor.profile === "development"
-    ? "persist:codex-web-gpt-dev-chatgpt"
-    : "persist:codex-web-gpt-chatgpt";
+    ? "persist:chatgpt-jev-dev-chatgpt"
+    : "persist:chatgpt-jev-chatgpt";
   if (descriptor.partition !== expectedPartition) {
     throw new Error("Launcher browser descriptor identifies an unexpected browser partition");
   }

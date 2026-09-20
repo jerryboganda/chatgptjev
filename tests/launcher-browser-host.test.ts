@@ -52,8 +52,8 @@ function descriptorFile(
       script: import.meta.path,
     },
     partition: profile === "development"
-      ? "persist:codex-web-gpt-dev-chatgpt"
-      : "persist:codex-web-gpt-chatgpt",
+      ? "persist:chatgpt-jev-dev-chatgpt"
+      : "persist:chatgpt-jev-chatgpt",
     idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB",
     surfaceTargets: { ["launcher_surface_id_0123456789AB"]: "native-owned-target" },
@@ -106,7 +106,7 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
       traceId: "abc123def456",
       helperPid: process.pid,
       conversationKey: "a".repeat(64),
-      connectorIdentity: "Codex Native2",
+      connectorIdentity: "Codex Jev",
       requireRetainedConversation: true,
     })).resolves.toEqual({
       surfaceId: "launcher_surface_id_0123456789AB",
@@ -119,7 +119,7 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
       traceId: "abc123def456",
       helperPid: process.pid,
       conversationKey: "a".repeat(64),
-      connectorIdentity: "Codex Native2",
+      connectorIdentity: "Codex Jev",
       requireRetainedConversation: true,
     });
     await notifyLauncherTurn(path, {
@@ -347,7 +347,7 @@ test("launcher profile checks reject cross-profile browser ownership", async () 
   const path = descriptorFile("http://127.0.0.1:39111", "development");
   expect(readLauncherBrowserHostDescriptor(path)).toMatchObject({
     profile: "development",
-    partition: "persist:codex-web-gpt-dev-chatgpt",
+    partition: "persist:chatgpt-jev-dev-chatgpt",
   });
   await expect(inspectLauncherBrowserHost(path, { expectedProfile: "production", timeoutMs: 5 }))
     .rejects.toThrow("belongs to development");

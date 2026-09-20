@@ -46,15 +46,15 @@ function parsePinnedTunnelCommand(command: string): string[] {
 }
 
 afterEach(() => {
-  delete process.env.CODEX_CHATGPT_WEB_HOME;
+  delete process.env.CHATGPT_JEV_HOME;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe("tunnel launchd ownership", () => {
   test("runs the pinned client directly and asks launchd to restore it", () => {
-    const root = join(tmpdir(), `codex-chatgpt-web-tunnel-service-${process.pid}-${Date.now()}`);
+    const root = join(tmpdir(), `chatgpt-jev-tunnel-service-${process.pid}-${Date.now()}`);
     roots.push(root);
-    process.env.CODEX_CHATGPT_WEB_HOME = root;
+    process.env.CHATGPT_JEV_HOME = root;
     const binary = join(root, "bin", "tunnel-client");
     const key = join(root, "secrets", "runtime.key");
     mkdirSync(join(root, "bin"), { recursive: true });
@@ -80,10 +80,10 @@ describe("tunnel launchd ownership", () => {
   });
 
   test("restarts the long-lived MCP worker when the installed release changes", () => {
-    const root = join(tmpdir(), `codex-chatgpt-web-tunnel-runtime-${process.pid}-${Date.now()}`);
+    const root = join(tmpdir(), `chatgpt-jev-tunnel-runtime-${process.pid}-${Date.now()}`);
     roots.push(root);
-    process.env.CODEX_CHATGPT_WEB_HOME = root;
-    const runtime = join(root, "bin", "codex-chatgpt-web");
+    process.env.CHATGPT_JEV_HOME = root;
+    const runtime = join(root, "bin", "chatgpt-jev");
     mkdirSync(join(root, "bin"), { recursive: true });
     writeFileSync(runtime, "runtime");
     const before = defaultConfig("browser-only");
@@ -99,9 +99,9 @@ describe("tunnel launchd ownership", () => {
   });
 
   test("reuses complete full-mode tunnel credentials during setup updates", () => {
-    const root = join(tmpdir(), `codex-chatgpt-web-existing-tunnel-${process.pid}-${Date.now()}`);
+    const root = join(tmpdir(), `chatgpt-jev-existing-tunnel-${process.pid}-${Date.now()}`);
     roots.push(root);
-    process.env.CODEX_CHATGPT_WEB_HOME = root;
+    process.env.CHATGPT_JEV_HOME = root;
     const key = join(root, "secrets", "runtime.key");
     mkdirSync(join(root, "secrets"), { recursive: true });
     writeFileSync(key, "secret");
@@ -119,21 +119,21 @@ describe("tunnel launchd ownership", () => {
   });
 
   test("passes the Windows MCP runtime directly to tunnel-client without cmd.exe", () => {
-    const root = join(tmpdir(), `codex-chatgpt-web-windows-mcp-${process.pid}-${Date.now()}`);
+    const root = join(tmpdir(), `chatgpt-jev-windows-mcp-${process.pid}-${Date.now()}`);
     roots.push(root);
-    process.env.CODEX_CHATGPT_WEB_HOME = root;
+    process.env.CHATGPT_JEV_HOME = root;
     const runtime = join(root, "Program Files", "runtime", "bun.exe");
     mkdirSync(join(root, "Program Files", "runtime"), { recursive: true });
     writeFileSync(runtime, "runtime");
     const config = defaultConfig("browser-only");
     config.runtimeCommand = [runtime, join(root, "Program Files", "app", "cli.js")];
-    config.brokerSocketPath = "\\\\.\\pipe\\codex-chatgpt-web-test";
+    config.brokerSocketPath = "\\\\.\\pipe\\chatgpt-jev-test";
 
     const command = mcpCommand(config, "win32");
     expect(command).toBe(
       `"${runtime.replaceAll("\\", "\\\\")}" `
       + `"${join(root, "Program Files", "app", "cli.js").replaceAll("\\", "\\\\")}" `
-      + '"mcp" "--contract" "native" "--broker-socket" "\\\\\\\\.\\\\pipe\\\\codex-chatgpt-web-test"',
+      + '"mcp" "--contract" "native" "--broker-socket" "\\\\\\\\.\\\\pipe\\\\chatgpt-jev-test"',
     );
     expect(command).not.toContain("cmd.exe");
     expect(existsSync(join(root, "bin", "mcp-launcher.cmd"))).toBe(false);
@@ -144,7 +144,7 @@ describe("tunnel launchd ownership", () => {
       "--contract",
       "native",
       "--broker-socket",
-      "\\\\.\\pipe\\codex-chatgpt-web-test",
+      "\\\\.\\pipe\\chatgpt-jev-test",
     ]);
 
     config.browserInteractionMode = "manual";

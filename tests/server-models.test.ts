@@ -8,7 +8,7 @@ import {
 import { modelsRequest } from "../src/server";
 
 test("proxies official /models auth and query, then appends the fixed ChatGPT Web models", async () => {
-  const request = new Request("http://127.0.0.1:17841/v1/models?client_version=1.2.3", {
+  const request = new Request("http://127.0.0.1:17851/v1/models?client_version=1.2.3", {
     headers: { authorization: "Bearer codex-oauth-token", "if-none-match": "native-etag" },
   });
   let upstream: Request | undefined;
@@ -81,7 +81,7 @@ test("Luna-only account exposes no paid ChatGPT Web routes", async () => {
   const config = defaultConfig("browser-only");
   config.solAvailable = false;
   const response = await modelsRequest(
-    new Request("http://127.0.0.1:17841/v1/models", {
+    new Request("http://127.0.0.1:17851/v1/models", {
       headers: { authorization: "Bearer codex-oauth-token" },
     }),
     config,
@@ -108,7 +108,7 @@ test("Zero Risk returns one generic Web row without using scanned capabilities",
   config.extraHighAvailable = true;
   config.proAvailable = true;
   const response = await modelsRequest(
-    new Request("http://127.0.0.1:17841/v1/models", {
+    new Request("http://127.0.0.1:17851/v1/models", {
       headers: { authorization: "Bearer codex-oauth-token" },
     }),
     config,
@@ -151,7 +151,7 @@ test("Zero Risk returns one generic Web row without using scanned capabilities",
 test("ChatGPT-only native catalog rows do not turn model discovery into a 502", async () => {
   const config = defaultConfig("browser-only");
   const response = await modelsRequest(
-    new Request("http://127.0.0.1:17841/v1/models?client_version=0.147.0", {
+    new Request("http://127.0.0.1:17851/v1/models?client_version=0.147.0", {
       headers: { authorization: "Bearer chatgpt-session-token" },
     }),
     config,

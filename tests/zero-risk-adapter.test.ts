@@ -75,7 +75,7 @@ function provider(name: string): CodexProviderConfig {
     adapter: "chatgpt-web",
     baseUrl: `manual://${name}-${Date.now()}`,
     chatgptWeb: {
-      appName: "Codex Zero Risk",
+      appName: "Codex Jev Zero Risk",
       browserInteractionMode: "manual",
       browserHost: "launcher",
       browserHostDescriptorPath: join(root, `${name}-launcher.json`),
@@ -134,7 +134,7 @@ for (const scenario of [
     version: 3, kind: LAUNCHER_BROWSER_HOST_KIND, profile: "development", pid: process.pid,
     endpoint: server.descriptor().endpoint, control: server.descriptor(),
     helper: { executable: process.execPath, script: import.meta.path },
-    partition: "persist:codex-web-gpt-dev-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
+    partition: "persist:chatgpt-jev-dev-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB", createdAt: new Date().toISOString(),
     surfaceTargets: { launcher_surface_id_0123456789AB: "native-owned-target" },
   }), { mode: 0o600 });
@@ -274,7 +274,7 @@ test("Zero Risk adapter never starts the automatic browser worker and completes 
     expect(events.some(event => event.type === "text_delta"
       && event.phase === "commentary"
       && event.text.startsWith("> **Action required in Zero Risk**")
-      && event.text.includes("select the `Codex Zero Risk` plugin")
+      && event.text.includes("select the `Codex Jev Zero Risk` plugin")
       && event.text.includes("confirm it was sent in the launcher"))).toBeTrue();
     expect(events.filter((event): event is Extract<AdapterEvent, { type: "text_delta" }> => (
       event.type === "text_delta" && event.phase === "final_answer"

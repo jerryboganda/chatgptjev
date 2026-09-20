@@ -11,7 +11,7 @@ const {
 } = require("../electron/state.cjs");
 
 test("launcher state persists onboarding, language, and autostart atomically", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-launcher-state-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-launcher-state-"));
   const file = path.join(root, "state.json");
   try {
     const store = createStateStore(file);
@@ -81,7 +81,7 @@ test("sidebar state accepts only bounded native shell dimensions", () => {
 
 test("every supported launcher language survives a state update and reload", () => {
   const languages = require("../electron/languages.json");
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-locale-state-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-locale-state-"));
   const file = path.join(root, "state.json");
   try {
     for (const language of Object.keys(languages)) {
@@ -102,7 +102,7 @@ test("every supported launcher language survives a state update and reload", () 
 });
 
 test("persisted sidebar corruption is repaired without changing the rest of launcher state", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-sidebar-state-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-sidebar-state-"));
   const file = path.join(root, "state.json");
   try {
     fs.writeFileSync(file, JSON.stringify({
@@ -145,7 +145,7 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
 });
 
 test("browser interaction defaults to Automatic and preserves a completed onboarding choice", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-interaction-state-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-interaction-state-"));
   const file = path.join(root, "state.json");
   try {
     const store = createStateStore(file);

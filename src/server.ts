@@ -101,7 +101,7 @@ function streamFailureEvidence(
 }
 
 const reportHttpStreamFailure: HttpStreamFailureReporter = evidence => {
-  console.warn(`[codex-chatgpt-web] http_stream_failed ${JSON.stringify(evidence)}`);
+  console.warn(`[chatgpt-jev] http_stream_failed ${JSON.stringify(evidence)}`);
 };
 
 function emitHttpStreamFailure(
@@ -832,7 +832,7 @@ export function startServer(
       if (req.method === "GET" && url.pathname === "/healthz") {
         return Response.json({
           status: "ok",
-          service: "codex-chatgpt-web",
+          service: "chatgpt-jev",
           version: VERSION,
           mode: config.mode,
           pid: process.pid,
@@ -989,7 +989,7 @@ export function startServer(
           return formatErrorResponse(
             503,
             "server_error",
-            "codex-chatgpt-web is draining for a requested service operation",
+            "chatgpt-jev is draining for a requested service operation",
           );
         }
         return httpTurns.track(async signal => {
@@ -1001,7 +1001,7 @@ export function startServer(
             if (!lastModelCatalogResult || request > lastModelCatalogResult.request) lastModelCatalogResult = result;
             if (!response.ok) {
               try {
-                console.warn(`[codex-chatgpt-web] model_catalog_failed ${JSON.stringify({ ...result, elapsedMs: Date.now() - started })}`);
+                console.warn(`[chatgpt-jev] model_catalog_failed ${JSON.stringify({ ...result, elapsedMs: Date.now() - started })}`);
               } catch { /* Logging must not replace the catalog result. */ }
             }
             return response;
@@ -1041,7 +1041,7 @@ export function startServer(
         });
       }
       if (req.method === "POST" && url.pathname === "/v1/responses") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (draining) return formatErrorResponse(503, "server_error", "chatgpt-jev is draining for a requested service operation");
         return httpTurns.track(
           (signal, bindIdentity) => responseRequest(
             new Request(req, { signal }),
@@ -1055,7 +1055,7 @@ export function startServer(
         );
       }
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (draining) return formatErrorResponse(503, "server_error", "chatgpt-jev is draining for a requested service operation");
         return httpTurns.track(
           (signal, bindIdentity) => compactRequest(
             new Request(req, { signal }),
@@ -1069,7 +1069,7 @@ export function startServer(
         );
       }
       if (req.method === "POST" && url.pathname === "/v1/alpha/search") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (draining) return formatErrorResponse(503, "server_error", "chatgpt-jev is draining for a requested service operation");
         return httpTurns.track(
           signal => nativeSearchRequest(new Request(req, { signal }), dependencies.fetchUpstream),
           req.signal,
@@ -1079,7 +1079,7 @@ export function startServer(
       }
       if (req.method === "POST"
         && (url.pathname === "/v1/images/generations" || url.pathname === "/v1/images/edits")) {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (draining) return formatErrorResponse(503, "server_error", "chatgpt-jev is draining for a requested service operation");
         const endpoint: NativeImageEndpoint = url.pathname === "/v1/images/generations"
           ? "images/generations"
           : "images/edits";
@@ -1109,13 +1109,13 @@ export function startServer(
       if (failures.length > 0) {
         process.exitCode = 1;
         for (const failure of failures) {
-          console.error(`[codex-chatgpt-web] shutdown cleanup failed: ${failure instanceof Error ? failure.message : String(failure)}`);
+          console.error(`[chatgpt-jev] shutdown cleanup failed: ${failure instanceof Error ? failure.message : String(failure)}`);
         }
       }
       await server.stop(true);
     })().catch(error => {
       process.exitCode = 1;
-      console.error(`[codex-chatgpt-web] server shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`[chatgpt-jev] server shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   process.once("SIGINT", shutdown);

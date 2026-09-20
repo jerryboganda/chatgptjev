@@ -5,13 +5,13 @@ test("forwards native Codex requests verbatim to the official backend", async ()
   const originalBody = Bun.zstdCompressSync(Buffer.from('{"model":"gpt-5.6-sol","stream":true}'));
   const encoded = new ArrayBuffer(originalBody.byteLength);
   new Uint8Array(encoded).set(originalBody);
-  const request = new Request("http://127.0.0.1:17841/v1/responses", {
+  const request = new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: {
       authorization: "Bearer codex-oauth-token",
       "content-type": "application/json",
       "content-encoding": "zstd",
-      host: "127.0.0.1:17841",
+      host: "127.0.0.1:17851",
       connection: "keep-alive",
     },
     body: encoded,
@@ -42,7 +42,7 @@ test("forwards native Codex compaction requests to the official compact endpoint
   const originalBody = Bun.zstdCompressSync(Buffer.from('{"model":"gpt-5.6-sol","input":[]}'));
   const encoded = new ArrayBuffer(originalBody.byteLength);
   new Uint8Array(encoded).set(originalBody);
-  const request = new Request("http://127.0.0.1:17841/v1/responses/compact", {
+  const request = new Request("http://127.0.0.1:17851/v1/responses/compact", {
     method: "POST",
     headers: {
       authorization: "Bearer codex-oauth-token",
@@ -74,7 +74,7 @@ test("native compaction failures record routing evidence without exposing reques
         { role: "user", content: "PRIVATE_PROMPT" },
         ...(endpoint === "responses" ? [{ type: "compaction_trigger" }] : []),
       ] });
-      const request = new Request(`http://127.0.0.1:17841/v1/${endpoint}`, {
+      const request = new Request(`http://127.0.0.1:17851/v1/${endpoint}`, {
         method: "POST", body,
         headers: { authorization: "Bearer PRIVATE_TOKEN", "chatgpt-account-id": "PRIVATE_ACCOUNT" },
       });
@@ -105,12 +105,12 @@ test("native compaction failures record routing evidence without exposing reques
 
 test("forwards standalone Web Search through the authenticated native Codex route", async () => {
   const body = JSON.stringify({ query: "Codex Web Search passthrough" });
-  const request = new Request("http://127.0.0.1:17841/v1/alpha/search?locale=en", {
+  const request = new Request("http://127.0.0.1:17851/v1/alpha/search?locale=en", {
     method: "POST",
     headers: {
       authorization: "Bearer codex-oauth-token",
       "content-type": "application/json",
-      host: "127.0.0.1:17841",
+      host: "127.0.0.1:17851",
     },
     body,
   });
@@ -166,7 +166,7 @@ test("removes ChatGPT Web item identities before native Codex compaction", async
   const originalBody = Bun.zstdCompressSync(Buffer.from(JSON.stringify(body)));
   const encoded = new ArrayBuffer(originalBody.byteLength);
   new Uint8Array(encoded).set(originalBody);
-  const request = new Request("http://127.0.0.1:17841/v1/responses", {
+  const request = new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: {
       authorization: "Bearer codex-oauth-token",
@@ -230,7 +230,7 @@ test("converts ChatGPT Web compaction checkpoints before switching back to nativ
       },
     ],
   };
-  const request = new Request("http://127.0.0.1:17841/v1/responses", {
+  const request = new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: {
       authorization: "Bearer codex-oauth-token",
@@ -278,7 +278,7 @@ test("keeps native encrypted reasoning requests byte-for-byte intact", async () 
   const originalBody = Bun.zstdCompressSync(Buffer.from(body));
   const encoded = new ArrayBuffer(originalBody.byteLength);
   new Uint8Array(encoded).set(originalBody);
-  const request = new Request("http://127.0.0.1:17841/v1/responses", {
+  const request = new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: {
       authorization: "Bearer codex-oauth-token",
@@ -298,7 +298,7 @@ test("keeps native encrypted reasoning requests byte-for-byte intact", async () 
 });
 
 test("native passthrough fails closed without Codex bearer authentication", async () => {
-  const request = new Request("http://127.0.0.1:17841/v1/responses", {
+  const request = new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: "{}",
@@ -310,7 +310,7 @@ test("native passthrough fails closed without Codex bearer authentication", asyn
 });
 
 test("forwards native model discovery as GET and preserves the client version query", async () => {
-  const request = new Request("http://127.0.0.1:17841/v1/models?client_version=0.99.0", {
+  const request = new Request("http://127.0.0.1:17851/v1/models?client_version=0.99.0", {
     headers: { authorization: "Bearer codex-oauth-token", "if-none-match": "old-etag" },
   });
   let upstreamRequest: Request | undefined;
@@ -324,7 +324,7 @@ test("forwards native model discovery as GET and preserves the client version qu
 });
 
 test("repairs a missing models client_version from an exact first-party Codex user agent", async () => {
-  const request = new Request("http://127.0.0.1:17841/v1/models", {
+  const request = new Request("http://127.0.0.1:17851/v1/models", {
     headers: {
       authorization: "Bearer codex-oauth-token",
       "user-agent": "codex_chatgpt_desktop/0.151.0-alpha.7.2 (Mac OS 15.6; arm64) Codex",
@@ -339,7 +339,7 @@ test("repairs a missing models client_version from an exact first-party Codex us
 });
 
 test("does not invent a models client version from an unrelated user agent", async () => {
-  const request = new Request("http://127.0.0.1:17841/v1/models", {
+  const request = new Request("http://127.0.0.1:17851/v1/models", {
     headers: {
       authorization: "Bearer codex-oauth-token",
       "user-agent": "Mozilla/5.0 Codex/999.999.999",
@@ -355,7 +355,7 @@ test("does not invent a models client version from an unrelated user agent", asy
 
 /** A reset after `data: [DONE]` is a completed stream, while a reset before it is a truncation. */
 function nativeRequest(): Request {
-  return new Request("http://127.0.0.1:17841/v1/responses", {
+  return new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: { authorization: "Bearer codex-oauth-token", "content-type": "application/json" },
     body: '{"model":"gpt-5.6-sol","stream":true}',

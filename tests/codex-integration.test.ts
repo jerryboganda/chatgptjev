@@ -45,19 +45,19 @@ function compatibilityV1Config(mode: "browser-only" | "full") {
 }
 
 function fixture(): { root: string; codexHome: string; appHome: string } {
-  const root = join(tmpdir(), `codex-chatgpt-web-integration-${process.pid}-${Date.now()}-${Math.random()}`);
+  const root = join(tmpdir(), `chatgpt-jev-integration-${process.pid}-${Date.now()}-${Math.random()}`);
   const codexHome = join(root, "codex");
   const appHome = join(root, "app");
   mkdirSync(codexHome, { recursive: true });
   roots.push(root);
   process.env.CODEX_HOME = codexHome;
-  process.env.CODEX_CHATGPT_WEB_HOME = appHome;
+  process.env.CHATGPT_JEV_HOME = appHome;
   return { root, codexHome, appHome };
 }
 
 afterEach(() => {
   delete process.env.CODEX_HOME;
-  delete process.env.CODEX_CHATGPT_WEB_HOME;
+  delete process.env.CHATGPT_JEV_HOME;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -159,7 +159,7 @@ describe("reversible native Codex route integration", () => {
     const journal = installCodexIntegration(nativeConfig("browser-only"));
     const installed = readFileSync(configPath, "utf8");
     expect(journal.version).toBe(10);
-    expect(installed).toContain('openai_base_url = "http://127.0.0.1:17841/v1"');
+    expect(installed).toContain('openai_base_url = "http://127.0.0.1:17851/v1"');
     expect(installed).toContain(
       `experimental_realtime_webrtc_call_base_url = ${JSON.stringify(CODEX_REALTIME_WEBRTC_CALL_BASE_URL)}`,
     );
@@ -169,7 +169,7 @@ describe("reversible native Codex route integration", () => {
     expect(installed).toContain("goals = true");
     expect(installed).not.toMatch(/^\s*model_provider\s*=/m);
     expect(installed).not.toMatch(/^\s*model_catalog_json\s*=/m);
-    expect(installed).not.toContain("[model_providers.codex-chatgpt-web]");
+    expect(installed).not.toContain("[model_providers.chatgpt-jev]");
     expect(readFileSync(getCodexJournalRecoveryPath(), "utf8"))
       .toBe(readFileSync(getCodexJournalPath(), "utf8"));
 
@@ -199,7 +199,7 @@ describe("reversible native Codex route integration", () => {
     expect(installed).toContain("multi_agent = false # native choice");
     expect(installed).toContain("multi_agent_v2 = true # native choice");
     expect(journal.installed).toEqual({
-      openai_base_url: "http://127.0.0.1:17841/v1",
+      openai_base_url: "http://127.0.0.1:17851/v1",
       experimental_realtime_webrtc_call_base_url: CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
       subagent_protocol: "native",
     });
@@ -230,15 +230,15 @@ describe("reversible native Codex route integration", () => {
       previousMultiAgent: { rawLine: "multi_agent = false # user choice", value: "false" },
       previousMultiAgentV2: { rawLine: "multi_agent_v2 = true # user choice", value: "true" },
     });
-    expect(installed).toContain("multi_agent = true # Managed by codex-chatgpt-web");
-    expect(installed).toContain("multi_agent_v2 = false # Managed by codex-chatgpt-web");
+    expect(installed).toContain("multi_agent = true # Managed by chatgpt-jev");
+    expect(installed).toContain("multi_agent_v2 = false # Managed by chatgpt-jev");
     expect(installed).toContain(managedAgentMaxDepthLine(2));
     expect(installed).toContain("goals = true");
 
     expect(deactivateCodexIntegration()).toEqual({ changed: true, active: false });
     expect(readFileSync(configPath, "utf8")).toBe(original);
     expect(activateCodexIntegration()).toEqual({ changed: true, active: true });
-    expect(readFileSync(configPath, "utf8")).toContain("multi_agent_v2 = false # Managed by codex-chatgpt-web");
+    expect(readFileSync(configPath, "utf8")).toContain("multi_agent_v2 = false # Managed by chatgpt-jev");
 
     uninstallCodexIntegration();
     expect(readFileSync(configPath, "utf8")).toBe(original);
@@ -265,7 +265,7 @@ describe("reversible native Codex route integration", () => {
 
     installCodexIntegration(compatibilityV1Config("full"));
     const installed = readFileSync(configPath, "utf8");
-    expect(installed).toContain("enabled = false # Managed by codex-chatgpt-web");
+    expect(installed).toContain("enabled = false # Managed by chatgpt-jev");
     expect(installed).toContain("hide_spawn_agent_metadata = true");
     expect(installed).not.toMatch(/^multi_agent_v2\s*=/m);
     expect(installed).toContain(managedAgentMaxDepthLine(4));
@@ -663,7 +663,7 @@ describe("reversible native Codex route integration", () => {
     expect(() => installCodexIntegration(config)).toThrow("--replace-codex-route");
     installCodexIntegration(config, { replaceExistingRoute: true });
     const installed = readFileSync(configPath, "utf8");
-    expect(installed).toContain('openai_base_url = "http://127.0.0.1:17841/v1"');
+    expect(installed).toContain('openai_base_url = "http://127.0.0.1:17851/v1"');
     expect(installed).toContain('model_provider = "existing-provider"');
     expect(installed).toContain('model_catalog_json = "/tmp/native.json"');
 
@@ -843,7 +843,7 @@ describe("reversible native Codex route integration", () => {
 
     expect(activateCodexIntegration()).toEqual({ changed: true, active: true });
     const reconnected = readFileSync(configPath, "utf8");
-    expect(reconnected).toContain('openai_base_url = "http://127.0.0.1:17841/v1"');
+    expect(reconnected).toContain('openai_base_url = "http://127.0.0.1:17851/v1"');
     expect(reconnected).not.toContain("remote_compaction_v2");
     expect(reconnected).not.toContain("multi_agent");
     expect(reconnected).toContain('approval_policy = "never"');

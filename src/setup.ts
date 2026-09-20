@@ -207,7 +207,7 @@ export function setupProxyIsReady(
   health: Record<string, unknown>,
   config: Pick<AppConfig, "mode" | "releaseVersion">,
 ): boolean {
-  return health.service === "codex-chatgpt-web"
+  return health.service === "chatgpt-jev"
     && health.status === "ok"
     && health.mode === config.mode
     && health.version === config.releaseVersion
@@ -296,7 +296,7 @@ function baseConfig(
       throw new Error("Zero Risk does not support Bigger Context");
     }
     if (config.mode !== "full") {
-      throw new Error("Zero Risk requires --full so Codex Zero Risk can signal start, tools, and completion");
+      throw new Error("Zero Risk requires --full so Codex Jev Zero Risk can signal start, tools, and completion");
     }
     if (config.browserHost !== "launcher") {
       throw new Error("Zero Risk requires the Launcher; pass --browser-host-descriptor from the running Launcher");
@@ -369,8 +369,8 @@ async function configureTunnel(config: AppConfig, existing: AppConfig | undefine
   }
   const installedBinary = await installTunnelClient();
   const productionProfileName = interactionMode === "manual"
-    ? "codex-chatgpt-web-zero-risk"
-    : "codex-chatgpt-web";
+    ? "chatgpt-jev-zero-risk"
+    : "chatgpt-jev";
   const profileName = config.purpose === DEV_CONFIG_PURPOSE
     ? interactionMode === "manual" ? `${DEV_TUNNEL_BASE_NAME}-zero-risk` : DEV_TUNNEL_BASE_NAME
     : productionProfileName;
@@ -434,7 +434,7 @@ function prepareSetup(options: SetupOptions): PreparedSetup {
   if (!launcherOwned && process.platform !== "darwin") {
     throw new Error(
       "Terminal-only managed Chrome setup currently requires macOS. "
-      + "Use the Codex Web GPT launcher on Windows or Linux.",
+      + "Use the ChatGPT Jev launcher on Windows or Linux.",
     );
   }
   return { existing, config, launcherOwned };
@@ -498,7 +498,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     }
   }
   if (beforeService.loaded && !existing) {
-    throw new Error("A codex-chatgpt-web service is loaded but its configuration is missing; refusing to replace an unverifiable process");
+    throw new Error("A chatgpt-jev service is loaded but its configuration is missing; refusing to replace an unverifiable process");
   }
 
   let loginCreated = false;

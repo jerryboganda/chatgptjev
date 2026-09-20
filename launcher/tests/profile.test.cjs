@@ -34,8 +34,8 @@ test("DEV launcher refuses an explicit home collision with production", () => {
   assert.throws(() => resolveLauncherProfile({
     argv: ["electron", ".", "--dev-profile"],
     env: {
-      CODEX_WEB_GPT_DEV_HOME: shared,
-      CODEX_CHATGPT_WEB_HOME: shared,
+      CHATGPT_JEV_DEV_HOME: shared,
+      CHATGPT_JEV_HOME: shared,
     },
     homeDir,
     appData: path.join(homeDir, "Library", "Application Support"),
@@ -47,10 +47,10 @@ test("DEV launcher ignores generic production path overrides", () => {
   const development = resolveLauncherProfile({
     argv: ["electron", ".", "--dev-profile"],
     env: {
-      CODEX_CHATGPT_WEB_HOME: path.join(homeDir, "production-core"),
+      CHATGPT_JEV_HOME: path.join(homeDir, "production-core"),
       CODEX_HOME: path.join(homeDir, "production-codex"),
-      CODEX_WEB_GPT_LAUNCHER_DATA_DIR: path.join(homeDir, "production-launcher"),
-      CODEX_WEB_GPT_DEV_HOME: path.join(homeDir, "isolated-dev"),
+      CHATGPT_JEV_LAUNCHER_DATA_DIR: path.join(homeDir, "production-launcher"),
+      CHATGPT_JEV_DEV_HOME: path.join(homeDir, "isolated-dev"),
     },
     homeDir,
     appData: path.join(homeDir, "Library", "Application Support"),

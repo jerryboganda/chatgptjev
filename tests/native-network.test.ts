@@ -48,10 +48,10 @@ test("native fetch reaches a proxy-only target, refreshes routing, and never ret
   } });
   const descriptor = join(root, "launcher.json");
   writeFileSync(descriptor, JSON.stringify({
-    version: 3, kind: "codex-web-gpt-launcher", profile: "production", pid: process.pid,
+    version: 3, kind: "chatgpt-jev-launcher", profile: "production", pid: process.pid,
     endpoint: "http://127.0.0.1:39110", control: { endpoint: control.url.origin, token },
     helper: { executable: process.execPath, script: import.meta.path },
-    partition: "persist:codex-web-gpt-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
+    partition: "persist:chatgpt-jev-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB", surfaceTargets: {}, createdAt: new Date().toISOString(),
   }), { mode: 0o600 });
   process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR = descriptor;

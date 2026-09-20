@@ -891,7 +891,7 @@ test("a Codex retry after tab cancellation receives terminal HTTP 400 without a 
     expect(await chatGptTurnSessions.cancelTrace(traceId)).toBe(1);
     expect(chatGptTurnSessions.cancelledError(traceId)?.message).toContain("Codex turn was cancelled");
     let adapterConstructions = 0;
-    const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+    const response = await responseRequest(new Request("http://127.0.0.1:17851/v1/responses", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -944,7 +944,7 @@ test("a restart recovery turn without a new user instruction fails terminally in
   };
   let adapterConstructions = 0;
 
-  const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+  const response = await responseRequest(new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -1102,7 +1102,7 @@ test("a drained runtime rejects new model-catalog work before shutdown", async (
     expect(await models.json()).toMatchObject({
       error: {
         type: "server_error",
-        message: "codex-chatgpt-web is draining for a requested service operation",
+        message: "chatgpt-jev is draining for a requested service operation",
       },
     });
 

@@ -12,7 +12,7 @@ SOURCE_URL="https://download.gnome.org/sources/libnotify/0.8/$ARCHIVE"
 EXPECTED_SHA256="4be15202ec4184fce1ac15997ece5530d2be32fe9573875aeb10e3b573858748"
 REPOSITORY_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 OUTPUT="${CODEX_WEB_GPT_LINUX_LIBNOTIFY_OUTPUT:-$REPOSITORY_ROOT/launcher/build/linux-libs/libnotify.so.4}"
-TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codex-web-gpt-libnotify.XXXXXX")"
+TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/chatgpt-jev-libnotify.XXXXXX")"
 trap 'rm -rf "$TEMP_DIR"' EXIT HUP INT TERM
 
 for command in curl meson ninja pkg-config sha256sum tar nm; do

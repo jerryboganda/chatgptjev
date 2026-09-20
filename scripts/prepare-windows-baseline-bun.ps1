@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 $Asset = "bun-windows-x64-baseline.zip"
 $ReleaseBase = "https://github.com/oven-sh/bun/releases/download/bun-v$Version"
-$Stage = Join-Path $env:RUNNER_TEMP "codex-chatgpt-web-bun-baseline-$Version"
+$Stage = Join-Path $env:RUNNER_TEMP "chatgpt-jev-bun-baseline-$Version"
 $Archive = Join-Path $Stage $Asset
 $Checksums = Join-Path $Stage "SHASUMS256.txt"
 $Extracted = Join-Path $Stage "extracted"

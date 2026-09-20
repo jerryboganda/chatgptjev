@@ -31,15 +31,15 @@ import {
 } from "./profile";
 import { DEV_CONFIG_PURPOSE, DEV_LAUNCHER_PROFILE } from "./constants";
 
-const DEV_HELP = `Codex Web GPT DEV chat
+const DEV_HELP = `ChatGPT Jev DEV chat
 
 Usage:
-  codex-chatgpt-web dev launcher
-  codex-chatgpt-web dev status [--json]
-  codex-chatgpt-web dev setup --browser-only [--automatic-browser-interaction]
-  codex-chatgpt-web dev setup --full --tunnel-id ID --runtime-key-file PATH [--automatic-browser-interaction|--zero-risk-browser-interaction]
-  codex-chatgpt-web dev chat NAME [--model MODEL] [MESSAGE]
-  codex-chatgpt-web dev list
+  chatgpt-jev dev launcher
+  chatgpt-jev dev status [--json]
+  chatgpt-jev dev setup --browser-only [--automatic-browser-interaction]
+  chatgpt-jev dev setup --full --tunnel-id ID --runtime-key-file PATH [--automatic-browser-interaction|--zero-risk-browser-interaction]
+  chatgpt-jev dev chat NAME [--model MODEL] [MESSAGE]
+  chatgpt-jev dev list
 
 Repository shortcut:
   bun run dev:launcher
@@ -153,7 +153,7 @@ function printHeader(
   mode: "browser-only" | "full",
   biggerContext: boolean,
 ): void {
-  stdout.write(`${bold("Codex Web GPT DEV")} · ${created ? "created" : "continued"} chat ${cyan(state.name)}\n`);
+  stdout.write(`${bold("ChatGPT Jev DEV")} · ${created ? "created" : "continued"} chat ${cyan(state.name)}\n`);
   stdout.write(`model ${state.model} · ${mode === "full" ? "tools explicitly simulated" : "browser-only, no outer tools"} · live launcher browser\n`);
   stdout.write(`context ${statusLine(status)}\n`);
   if (biggerContext) {

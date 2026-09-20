@@ -39,7 +39,7 @@ if (-not $Version) {
   $Version = [string]$Release.tag_name
 }
 if ($Version -and $Version.StartsWith("v")) { $Version = $Version.Substring(1) }
-if (-not $Version) { throw "Could not resolve the latest Codex Web GPT release" }
+if (-not $Version) { throw "Could not resolve the latest ChatGPT Jev release" }
 if ($Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Invalid release version: $Version" }
 
 if (-not [Environment]::Is64BitOperatingSystem) {
@@ -47,13 +47,13 @@ if (-not [Environment]::Is64BitOperatingSystem) {
 }
 $Arch = "x64"
 
-$Asset = "codex-web-gpt-$Version-win-$Arch.exe"
+$Asset = "chatgpt-jev-$Version-win-$Arch.exe"
 $BaseUrl = "https://github.com/$Repository/releases/download/v$Version"
-$Temp = Join-Path ([System.IO.Path]::GetTempPath()) "codex-web-gpt-$([guid]::NewGuid().ToString('N'))"
+$Temp = Join-Path ([System.IO.Path]::GetTempPath()) "chatgpt-jev-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $Temp | Out-Null
 try {
-  if (Get-Process -Name "Codex Web GPT" -ErrorAction SilentlyContinue) {
-    throw "Quit Codex Web GPT before updating it"
+  if (Get-Process -Name "ChatGPT Jev" -ErrorAction SilentlyContinue) {
+    throw "Quit ChatGPT Jev before updating it"
   }
   $Installer = Join-Path $Temp $Asset
   $Checksums = Join-Path $Temp "checksums.txt"
@@ -72,12 +72,12 @@ try {
   if ($Actual -ne $Expected) { throw "SHA-256 verification failed for $Asset" }
   $Process = Start-Process -FilePath $Installer -ArgumentList "/S", "/currentuser" -Wait -PassThru
   if ($Process.ExitCode -ne 0) { throw "Installer exited with code $($Process.ExitCode)" }
-  $InstallRegistry = "HKCU:\Software\d1a6026a-6210-588e-9a2b-da3936f94e02"
+  $InstallRegistry = "HKCU:\Software\a10be615-f3b8-4a54-9f50-2c5fd912e945"
   $InstallLocation = [string](Get-ItemPropertyValue -LiteralPath $InstallRegistry -Name "InstallLocation")
   if (-not (Test-IsFullyQualifiedWindowsPath $InstallLocation)) {
     throw "Installer recorded an invalid InstallLocation: $InstallLocation"
   }
-  $Executable = Join-Path $InstallLocation "Codex Web GPT.exe"
+  $Executable = Join-Path $InstallLocation "ChatGPT Jev.exe"
   if (-not (Test-Path $Executable)) { throw "Installed launcher was not found at $Executable" }
   Start-Process $Executable
   Write-Host "Installed $Executable"

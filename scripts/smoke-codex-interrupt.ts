@@ -25,12 +25,12 @@ if (bundled.status !== 0) {
 }
 const nativeCatalog = JSON.parse(bundled.stdout);
 
-const root = join(tmpdir(), `codex-chatgpt-web-interrupt-${process.pid}-${Date.now()}`);
+const root = join(tmpdir(), `chatgpt-jev-interrupt-${process.pid}-${Date.now()}`);
 const codexHome = join(root, "codex");
 const appHome = join(root, "app");
 mkdirSync(codexHome, { recursive: true });
 process.env.CODEX_HOME = codexHome;
-process.env.CODEX_CHATGPT_WEB_HOME = appHome;
+process.env.CHATGPT_JEV_HOME = appHome;
 
 let adapterStarted = false;
 let adapterAborted = false;
@@ -188,7 +188,7 @@ const client = new AppServerClient();
 let smokeError: unknown;
 try {
   await client.request("initialize", {
-    clientInfo: { name: "codex-chatgpt-web-interrupt-smoke", version: "1" },
+    clientInfo: { name: "chatgpt-jev-interrupt-smoke", version: "1" },
     capabilities: { experimentalApi: true },
   });
   client.notify("initialized");
@@ -269,7 +269,7 @@ try {
   await server.stop(true);
   rmSync(root, { recursive: true, force: true });
   delete process.env.CODEX_HOME;
-  delete process.env.CODEX_CHATGPT_WEB_HOME;
+  delete process.env.CHATGPT_JEV_HOME;
   if (smokeError) {
     throw new Error(`${smokeError instanceof Error ? smokeError.message : String(smokeError)}\nCodex stderr:\n${stderr.slice(-8_000)}`);
   }

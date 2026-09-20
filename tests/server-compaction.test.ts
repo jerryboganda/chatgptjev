@@ -50,7 +50,7 @@ test("compacts ChatGPT Web v1 through a dedicated read-only browser summarizatio
   const providers: CodexProviderConfig[] = [];
   const previousSummary = `${SUMMARY_PREFIX}\nPrevious cumulative checkpoint`;
   const config = defaultConfig("full");
-  const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
+  const response = await compactRequest(new Request("http://127.0.0.1:17851/v1/responses/compact", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -79,7 +79,7 @@ test("compacts a Pro task with Pro effort", async () => {
   const config = defaultConfig("full");
   config.extraHighAvailable = true;
   config.proAvailable = true;
-  const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
+  const response = await compactRequest(new Request("http://127.0.0.1:17851/v1/responses/compact", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -101,7 +101,7 @@ test("compacts a Pro task with Pro effort", async () => {
 
 test("preserves canonical Codex turn metadata from the compact endpoint header", async () => {
   const turnMetadata = { thread_id: "thread_compact", turn_id: "turn_compact" };
-  const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
+  const response = await compactRequest(new Request("http://127.0.0.1:17851/v1/responses/compact", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -133,7 +133,7 @@ test("preserves canonical Codex turn metadata from the compact endpoint header",
 
 test("compaction identity accepts a historical source message from the pre-compaction turn", async () => {
   const turnMetadata = { thread_id: "thread_compact", turn_id: "turn_compact" };
-  const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
+  const response = await compactRequest(new Request("http://127.0.0.1:17851/v1/responses/compact", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -305,7 +305,7 @@ for (const stream of [false, true]) test(`failed compaction cannot authorize a c
 test("returns exactly one native compaction item for a ChatGPT Web v2 request", async () => {
   const providers: CodexProviderConfig[] = [];
   const config = defaultConfig("full");
-  const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+  const response = await responseRequest(new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -333,7 +333,7 @@ test("returns exactly one native compaction item for a ChatGPT Web v2 request", 
 
 test("v2 recompaction reads the previous checkpoint once and replaces it with one new compaction item", async () => {
   const config = defaultConfig("full");
-  const firstResponse = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+  const firstResponse = await responseRequest(new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -353,7 +353,7 @@ test("v2 recompaction reads the previous checkpoint once and replaces it with on
   const previousCompaction = firstBody.output[0]!;
 
   const updatedSummary = "The previous checkpoint was consumed. Continue with the latest request only.";
-  const secondResponse = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+  const secondResponse = await responseRequest(new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -395,7 +395,7 @@ test("v2 recompaction reads the previous checkpoint once and replaces it with on
 });
 
 test("streams one compaction item without leaking the summary as a normal assistant message", async () => {
-  const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+  const response = await responseRequest(new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model, stream: true, input: [{ type: "compaction_trigger" }] }),
@@ -409,7 +409,7 @@ test("streams one compaction item without leaking the summary as a normal assist
 });
 
 test("rejects an unknown routed compact model instead of treating it as ChatGPT Web", async () => {
-  const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
+  const response = await compactRequest(new Request("http://127.0.0.1:17851/v1/responses/compact", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model: "chatgpt-web/not-enabled", input: [] }),
@@ -424,7 +424,7 @@ test("Luna rejects separate native compaction instead of opening another browser
   const config = defaultConfig("browser-only");
   config.solAvailable = false;
   let adapterStarted = false;
-  const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
+  const response = await compactRequest(new Request("http://127.0.0.1:17851/v1/responses/compact", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model: "chatgpt-web/luna", input: [] }),
@@ -449,7 +449,7 @@ test("Luna rejects a remote-v2 compaction trigger before opening another browser
   const config = defaultConfig("browser-only");
   config.solAvailable = false;
   let adapterStarted = false;
-  const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+  const response = await responseRequest(new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -478,7 +478,7 @@ test("rejects Pro-only routed models before opening a browser when the account h
     ["chatgpt-web/extra-high", "Extra High"],
     ["chatgpt-web/pro", "Pro"],
   ] as const) {
-    const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+    const response = await responseRequest(new Request("http://127.0.0.1:17851/v1/responses", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: routedModel, input: "test", stream: false }),
@@ -491,7 +491,7 @@ test("rejects Pro-only routed models before opening a browser when the account h
 });
 
 test("preserves a structured browser preflight failure through the v1 compaction endpoint", async () => {
-  const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
+  const response = await compactRequest(new Request("http://127.0.0.1:17851/v1/responses/compact", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model, input: [] }),
@@ -520,7 +520,7 @@ test("preserves a structured browser preflight failure through the v1 compaction
 });
 
 test("refuses a ChatGPT Web continuation when local previous-response state is unavailable", async () => {
-  const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+  const response = await responseRequest(new Request("http://127.0.0.1:17851/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({

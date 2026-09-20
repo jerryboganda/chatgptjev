@@ -137,8 +137,8 @@ test("startup failure stays visible on another launch and Retry exits the failed
       assert.equal(language, "ko");
       return { startupTitle: "시작 오류", startupDetail: "다시 시작", startupCleanupFailed: "정리 실패", retry: "다시 시도", quit: "종료" };
     },
-    launchEnvironment: { CODEX_CHATGPT_WEB_HOME: undefined, CODEX_HOME: "original-codex-home" },
-    process: { argv: ["launcher", "--hidden"], env: { CODEX_CHATGPT_WEB_HOME: "dev-home", CODEX_HOME: "dev-codex-home" } },
+    launchEnvironment: { CHATGPT_JEV_HOME: undefined, CODEX_HOME: "original-codex-home" },
+    process: { argv: ["launcher", "--hidden"], env: { CHATGPT_JEV_HOME: "dev-home", CODEX_HOME: "dev-codex-home" } },
     dialog: {
       showErrorBox: () => { answer.opened(); },
       showMessageBox: (owner, options) => {

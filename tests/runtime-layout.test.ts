@@ -28,12 +28,12 @@ import {
 
 const roots: string[] = [];
 afterEach(() => {
-  delete process.env.CODEX_CHATGPT_WEB_HOME;
+  delete process.env.CHATGPT_JEV_HOME;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 test("managed runtime commands reject every ephemeral path component", () => {
-  expect(() => assertDurableRuntimeCommand(["/private/tmp/codex-chatgpt-web"])).toThrow("ephemeral path");
+  expect(() => assertDurableRuntimeCommand(["/private/tmp/chatgpt-jev"])).toThrow("ephemeral path");
   expect(() => assertDurableRuntimeCommand([process.execPath, "/tmp/build/app/cli.js"])).toThrow("ephemeral path");
   expect(() => assertDurableRuntimeCommand([process.execPath])).not.toThrow();
 });
@@ -52,7 +52,7 @@ test("Windows Bun shims resolve to the installed Bun executable before service s
 });
 
 test("installed Bun discovery ignores a temporary self-extract executable", () => {
-  const root = join(tmpdir(), `codex-chatgpt-web-bun-discovery-${process.pid}-${Date.now()}`);
+  const root = join(tmpdir(), `chatgpt-jev-bun-discovery-${process.pid}-${Date.now()}`);
   const ephemeralBun = join(root, "bun-node-test", "bun.exe");
   roots.push(root);
   mkdirSync(join(root, "bun-node-test"), { recursive: true });
@@ -65,12 +65,12 @@ test("installed Bun discovery ignores a temporary self-extract executable", () =
 });
 
 test("Windows uses a stable native named pipe for the outer Codex tool broker", () => {
-  const first = defaultBrokerEndpoint("C:\\Users\\alice\\.codex-chatgpt-web", "win32");
-  const second = defaultBrokerEndpoint("C:\\Users\\alice\\.codex-chatgpt-web", "win32");
+  const first = defaultBrokerEndpoint("C:\\Users\\alice\\.chatgpt-jev", "win32");
+  const second = defaultBrokerEndpoint("C:\\Users\\alice\\.chatgpt-jev", "win32");
   expect(first).toBe(second);
   expect(isWindowsPipeEndpoint(first)).toBe(true);
   expect(resolveBrokerEndpoint(first)).toBe(first);
-  expect(defaultBrokerEndpoint("/home/alice/.codex-chatgpt-web", "linux")).toEndWith(join("runtime", "turn-broker.sock"));
+  expect(defaultBrokerEndpoint("/home/alice/.chatgpt-jev", "linux")).toEndWith(join("runtime", "turn-broker.sock"));
 });
 
 test("permission-denied process probes preserve ownership evidence", () => {
@@ -118,9 +118,9 @@ test.each([
 });
 
 test("setup repairs a legacy automatic connector name that collides with Zero Risk", () => {
-  const root = join(tmpdir(), `codex-chatgpt-web-connector-collision-${process.pid}-${Date.now()}`);
+  const root = join(tmpdir(), `chatgpt-jev-connector-collision-${process.pid}-${Date.now()}`);
   roots.push(root);
-  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  process.env.CHATGPT_JEV_HOME = root;
   mkdirSync(root, { recursive: true });
   const collided = defaultConfig("browser-only");
   collided.appName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
@@ -136,16 +136,16 @@ test("setup repairs a legacy automatic connector name that collides with Zero Ri
 });
 
 test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", () => {
-  const root = join(tmpdir(), `codex-chatgpt-web-config-migration-${process.pid}-${Date.now()}`);
+  const root = join(tmpdir(), `chatgpt-jev-config-migration-${process.pid}-${Date.now()}`);
   roots.push(root);
-  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  process.env.CHATGPT_JEV_HOME = root;
   mkdirSync(root, { recursive: true });
   writeFileSync(join(root, "config.json"), `${JSON.stringify({
     version: 1,
     releaseVersion: "0.1.0",
     mode: "pro-only",
     host: "127.0.0.1",
-    port: 17841,
+    port: 17851,
     contextWindow: 256_000,
     appName: "Codex Native",
     chromeExecutablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -170,9 +170,9 @@ test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", 
 });
 
 test("existing v3 configurations deterministically retain automatic browser interaction", () => {
-  const root = join(tmpdir(), `codex-chatgpt-web-v3-interaction-migration-${process.pid}-${Date.now()}`);
+  const root = join(tmpdir(), `chatgpt-jev-v3-interaction-migration-${process.pid}-${Date.now()}`);
   roots.push(root);
-  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  process.env.CHATGPT_JEV_HOME = root;
   mkdirSync(root, { recursive: true });
   const legacyV3: Record<string, unknown> = { ...defaultConfig("browser-only") };
   delete legacyV3.browserInteractionMode;
@@ -192,9 +192,9 @@ test("existing v3 configurations deterministically retain automatic browser inte
 });
 
 test("Zero Risk fails closed without the Launcher browser host", () => {
-  const root = join(tmpdir(), `codex-chatgpt-web-manual-host-${process.pid}-${Date.now()}`);
+  const root = join(tmpdir(), `chatgpt-jev-manual-host-${process.pid}-${Date.now()}`);
   roots.push(root);
-  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  process.env.CHATGPT_JEV_HOME = root;
   mkdirSync(root, { recursive: true });
   const invalid = defaultConfig("full");
   invalid.browserInteractionMode = "manual";
@@ -205,9 +205,9 @@ test("Zero Risk fails closed without the Launcher browser host", () => {
 });
 
 test("legacy temp-path wrapper and vendor are removed only after runtime ownership changes", () => {
-  const root = join(tmpdir(), `codex-chatgpt-web-legacy-runtime-${process.pid}-${Date.now()}`);
+  const root = join(tmpdir(), `chatgpt-jev-legacy-runtime-${process.pid}-${Date.now()}`);
   roots.push(root);
-  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  process.env.CHATGPT_JEV_HOME = root;
   const wrapper = join(root, "bin", "serve-with-playwright.sh");
   const vendorFile = join(root, "vendor", "node_modules", "playwright-core", "package.json");
   mkdirSync(join(root, "bin"), { recursive: true });
@@ -228,7 +228,7 @@ test("legacy temp-path wrapper and vendor are removed only after runtime ownersh
 test("launcher browser ownership is explicit in provider configuration", () => {
   const config = defaultConfig("browser-only");
   config.browserHost = "launcher";
-  config.browserHostDescriptorPath = "/Users/example/.codex-chatgpt-web/runtime/launcher-browser.json";
+  config.browserHostDescriptorPath = "/Users/example/.chatgpt-jev/runtime/launcher-browser.json";
   config.stallTimeoutSec = 900;
   expect(providerConfig(config).chatgptWeb).toMatchObject({
     browserHost: "launcher",
@@ -284,7 +284,7 @@ test("manual provider configuration preserves a distinct backend without guessin
 test("skill attachments config defaults off, reaches the adapter, and rejects invalid/manual settings", () => {
   const root = join(tmpdir(), `codex-skills-config-${process.pid}-${Date.now()}`);
   roots.push(root);
-  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  process.env.CHATGPT_JEV_HOME = root;
   mkdirSync(root, { recursive: true });
   const config: Record<string, unknown> = { ...defaultConfig("full") };
   config.browserHost = "launcher";

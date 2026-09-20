@@ -29,7 +29,7 @@ import { decodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compac
 import { parseRequest } from "../src/responses/parser";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig, CodexTool } from "../src/types";
 
-const tempRoot = join(tmpdir(), `codex-chatgpt-web-harness-${process.pid}-${Date.now()}`);
+const tempRoot = join(tmpdir(), `chatgpt-jev-harness-${process.pid}-${Date.now()}`);
 mkdirSync(tempRoot, { recursive: true });
 afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
 
@@ -2611,7 +2611,7 @@ describe("ChatGPT outer-native harness v4", () => {
       cwd: process.cwd(),
       stderr: "pipe",
     });
-    const client = new Client({ name: "codex-chatgpt-web-harness-test", version: "1.0.0" });
+    const client = new Client({ name: "chatgpt-jev-harness-test", version: "1.0.0" });
     const call = (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args });
 
     try {
@@ -3054,7 +3054,7 @@ describe("ChatGPT outer-native harness v4", () => {
       cwd: process.cwd(),
       stderr: "pipe",
     });
-    const client = new Client({ name: "codex-chatgpt-web-direct-tools-test", version: "1.0.0" });
+    const client = new Client({ name: "chatgpt-jev-direct-tools-test", version: "1.0.0" });
     const call = (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args });
 
     try {
@@ -3172,7 +3172,7 @@ describe("ChatGPT outer-native harness v4", () => {
       cwd: process.cwd(),
       stderr: "pipe",
     });
-    const client = new Client({ name: "codex-chatgpt-web-turn-isolation-test", version: "1.0.0" });
+    const client = new Client({ name: "chatgpt-jev-turn-isolation-test", version: "1.0.0" });
 
     try {
       await client.connect(transport);
@@ -3230,7 +3230,7 @@ describe("ChatGPT outer-native harness v4", () => {
       cwd: process.cwd(),
       stderr: "pipe",
     });
-    const client = new Client({ name: "codex-chatgpt-web-harness-test", version: "1.0.0" });
+    const client = new Client({ name: "chatgpt-jev-harness-test", version: "1.0.0" });
     const call = (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args });
 
     try {
@@ -3278,7 +3278,7 @@ describe("ChatGPT outer-native harness v4", () => {
       cwd: process.cwd(),
       stderr: "pipe",
     });
-    const client = new Client({ name: "codex-chatgpt-web-mcp-abort-test", version: "1.0.0" });
+    const client = new Client({ name: "chatgpt-jev-mcp-abort-test", version: "1.0.0" });
 
     try {
       expect(chatGptMcpInvocationTimeout(environment)).toBe(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS);
@@ -3338,7 +3338,7 @@ describe("ChatGPT outer-native harness v4", () => {
       cwd: process.cwd(),
       stderr: "pipe",
     });
-    const client = new Client({ name: "codex-chatgpt-web-mcp-timeout-test", version: "1.0.0" });
+    const client = new Client({ name: "chatgpt-jev-mcp-timeout-test", version: "1.0.0" });
 
     try {
       await client.connect(transport);

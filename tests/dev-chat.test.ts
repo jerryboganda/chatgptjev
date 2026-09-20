@@ -363,7 +363,7 @@ test("DEV driver uses shared browser methods and its own broker while an unrelat
   const root = scratch("cgw-dev-driver");
   const codexConfig = join(root, "codex", "config.toml");
   mkdirSync(join(root, "codex"), { recursive: true });
-  writeFileSync(codexConfig, "openai_base_url = \"http://127.0.0.1:17841/v1\"\n");
+  writeFileSync(codexConfig, "openai_base_url = \"http://127.0.0.1:17851/v1\"\n");
   const sentinel = readFileSync(codexConfig, "utf8");
   const occupied = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("live") });
   const config = { ...defaultConfig("full"), port: occupied.port!, brokerSocketPath: defaultBrokerEndpoint(join(root, "broker")) };

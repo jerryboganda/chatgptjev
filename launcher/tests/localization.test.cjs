@@ -51,7 +51,7 @@ for (const language of Object.keys(languages).filter(language => language !== "e
   const { copyFor, localizeRuntimeMessage } = loadI18nModule();
   const copy = copyFor(language);
   const connectorNames = [
-    "Codex Native2",
+    "Codex Jev",
     "Native $&",
     "Native $'",
     "Native $`",
@@ -71,14 +71,14 @@ for (const language of Object.keys(languages).filter(language => language !== "e
   }
 
   assert.equal(
-    localizeRuntimeMessage(copy, "Responses proxy is healthy on 127.0.0.1:17841", "proxy", language),
-    copy.doctorProxyHealthy.replace("{endpoint}", () => "127.0.0.1:17841"),
+    localizeRuntimeMessage(copy, "Responses proxy is healthy on 127.0.0.1:17851", "proxy", language),
+    copy.doctorProxyHealthy.replace("{endpoint}", () => "127.0.0.1:17851"),
   );
 });
 
 test("runtime message localization preserves other languages and unknown backend messages", () => {
   const { copyFor, localizeRuntimeMessage } = loadI18nModule();
-  const connectorNames = ["Codex Native2", "Native $&", "Native $'", "Native $`", 'Native "quoted"', "Native \\path"];
+  const connectorNames = ["Codex Jev", "Native $&", "Native $'", "Native $`", 'Native "quoted"', "Native \\path"];
 
   for (const language of ["en"]) {
     for (const connectorName of connectorNames) {
@@ -103,16 +103,16 @@ test("runtime message localization preserves other languages and unknown backend
     'ChatGPT connector "unterminated is available',
   );
   assert.equal(
-    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Native2" is available', "wrong-id", "ja"),
-    'ChatGPT connector "Codex Native2" is available',
+    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Jev" is available', "wrong-id", "ja"),
+    'ChatGPT connector "Codex Jev" is available',
   );
   assert.equal(
     localizeRuntimeMessage(copyFor("ja"), "Checking ChatGPT connector", "unknown-check", "ja"),
     "Checking ChatGPT connector",
   );
   assert.equal(
-    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Native2" is available (warning)', "connector", "ja"),
-    'ChatGPT connector "Codex Native2" is available (warning)',
+    localizeRuntimeMessage(copyFor("ja"), 'ChatGPT connector "Codex Jev" is available (warning)', "connector", "ja"),
+    'ChatGPT connector "Codex Jev" is available (warning)',
   );
 });
 

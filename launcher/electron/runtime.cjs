@@ -412,10 +412,10 @@ class RuntimeHost {
       throw new Error("DEV setup environment requires the isolated DEV launcher");
     }
     const childEnvironment = { ...environment };
-    delete childEnvironment.CODEX_CHATGPT_WEB_HOME;
+    delete childEnvironment.CHATGPT_JEV_HOME;
     delete childEnvironment.CODEX_HOME;
-    delete childEnvironment.CODEX_WEB_GPT_LAUNCHER_DATA_DIR;
-    childEnvironment.CODEX_WEB_GPT_DEV_HOME = this.coreHome;
+    delete childEnvironment.CHATGPT_JEV_LAUNCHER_DATA_DIR;
+    childEnvironment.CHATGPT_JEV_DEV_HOME = this.coreHome;
     return childEnvironment;
   }
 
@@ -479,14 +479,14 @@ class RuntimeHost {
       path.join(coreHome, "secrets", "tunnel-runtime.key"),
       path.join(coreHome, "secrets", "tunnel-runtime-automatic.key"),
       path.join(coreHome, "secrets", "tunnel-runtime-zero-risk.key"),
-      path.join(coreHome, "tunnel", "profiles", "codex-chatgpt-web.yaml"),
-      path.join(coreHome, "tunnel", "profiles", "codex-chatgpt-web-zero-risk.yaml"),
-      path.join(coreHome, "tunnel", "profiles", "codex-chatgpt-web-dev.yaml"),
-      path.join(coreHome, "tunnel", "profiles", "codex-chatgpt-web-dev-zero-risk.yaml"),
+      path.join(coreHome, "tunnel", "profiles", "chatgpt-jev.yaml"),
+      path.join(coreHome, "tunnel", "profiles", "chatgpt-jev-zero-risk.yaml"),
+      path.join(coreHome, "tunnel", "profiles", "chatgpt-jev-dev.yaml"),
+      path.join(coreHome, "tunnel", "profiles", "chatgpt-jev-dev-zero-risk.yaml"),
     ]);
     if (snapshot.owner === "external" && this.platform === "darwin") {
-      paths.add(path.join(this.launchAgentsDir, "io.github.codex-chatgpt-web.daemon.plist"));
-      paths.add(path.join(this.launchAgentsDir, "io.github.codex-chatgpt-web.tunnel.plist"));
+      paths.add(path.join(this.launchAgentsDir, "io.github.chatgpt-jev.daemon.plist"));
+      paths.add(path.join(this.launchAgentsDir, "io.github.chatgpt-jev.tunnel.plist"));
     }
     const tunnels = [
       snapshot.config?.tunnel,
@@ -964,7 +964,7 @@ class RuntimeHost {
           embedded: true,
           env: this.launcherControlEnvironment(),
           message: "Restoring the previous Codex route",
-          successMessage: "Codex Web GPT integration removed",
+          successMessage: "ChatGPT Jev integration removed",
           timeoutMs: UNINSTALL_TIMEOUT_MS,
         });
         const verified = await this.bridgeStatus(name);
@@ -1167,8 +1167,8 @@ class RuntimeHost {
       && isLegacyConnectorName(validateConnectorName(existing.config?.appName));
     const interactionMode = existing.config?.browserInteractionMode ?? "automatic";
     const expectedTunnelProfile = interactionMode === "manual"
-      ? "codex-chatgpt-web-zero-risk"
-      : "codex-chatgpt-web";
+      ? "chatgpt-jev-zero-risk"
+      : "chatgpt-jev";
     const expectedKeyFile = interactionMode === "manual"
       ? "tunnel-runtime-zero-risk.key"
       : "tunnel-runtime-automatic.key";
