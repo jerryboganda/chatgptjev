@@ -55,6 +55,8 @@ export interface SetupOptions {
   experimentalBiggerContext?: boolean;
   experimentalSkillAttachments?: boolean;
   zeroRiskProEnabled?: boolean;
+  /** `true`/`false` writes `jevEnabled`; omitted leaves the stored value alone. */
+  jevEnabled?: boolean;
   replaceCodexRoute?: boolean;
   restartService?: boolean;
   acknowledgedUnofficial?: boolean;
@@ -147,6 +149,7 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     experimentalBiggerContext: before.experimentalBiggerContext,
     experimentalSkillAttachments: before.experimentalSkillAttachments,
     zeroRiskProEnabled: before.zeroRiskProEnabled,
+    jevEnabled: before.jevEnabled,
     autoApproveToolCalls: before.autoApproveToolCalls,
     controlToken: before.controlToken,
     runtimeCommand: before.runtimeCommand,
@@ -176,6 +179,7 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     experimentalBiggerContext: after.experimentalBiggerContext,
     experimentalSkillAttachments: after.experimentalSkillAttachments,
     zeroRiskProEnabled: after.zeroRiskProEnabled,
+    jevEnabled: after.jevEnabled,
     autoApproveToolCalls: after.autoApproveToolCalls,
     controlToken: after.controlToken,
     runtimeCommand: after.runtimeCommand,
@@ -282,6 +286,7 @@ function baseConfig(
     }
     config.zeroRiskProEnabled = options.zeroRiskProEnabled;
   }
+  if (options.jevEnabled !== undefined) config.jevEnabled = options.jevEnabled;
   if (config.browserInteractionMode === "manual") {
     if (options.refreshAccountCapabilities) {
       throw new Error("Zero Risk cannot refresh account capabilities");

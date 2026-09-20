@@ -16,6 +16,7 @@ import type {
   BrowserInteractionMode,
   BrowserState,
   DoctorReport,
+  JevStatus,
   Language,
   LauncherSnapshot,
   LauncherState,
@@ -1586,6 +1587,15 @@ function SettingsSurface({
   const [busy, setBusy] = useState(false);
   const [turnsCancelled, setTurnsCancelled] = useState(false);
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
+  const [jev, setJevStatus] = useState<JevStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api!.jev().then((status) => {
+      if (!cancelled) setJevStatus(status);
+    }).catch((cause) => setError(messageOf(cause)));
+    return () => { cancelled = true; };
+  }, [setError, snapshot.state.coreSetupComplete]);
 
   const updateLanguage = async (next: Language) => {
     try {
@@ -1632,6 +1642,17 @@ function SettingsSurface({
     setError(null);
     try {
       updateState(await api!.setSkillAttachments(enabled));
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const setJev = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setJevStatus(await api!.jev(enabled));
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -1722,6 +1743,16 @@ function SettingsSurface({
             checked={snapshot.state.experimentalSkillAttachments}
             disabled={busy || snapshot.state.browserInteractionMode === "manual" || !snapshot.state.coreSetupComplete}
             onChange={(checked) => void setSkillAttachments(checked)}
+          />
+        </SettingRow>
+        <SettingRow
+          body={jev && !jev.keyPresent ? `${copy.jevJudgmentsBody} ${copy.jevKeyMissing}` : copy.jevJudgmentsBody}
+          label={copy.jevJudgments}
+        >
+          <Switch
+            checked={jev?.enabled ?? true}
+            disabled={busy || !jev?.configured || snapshot.state.coreSetupComplete !== true}
+            onChange={(checked) => void setJev(checked)}
           />
         </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>

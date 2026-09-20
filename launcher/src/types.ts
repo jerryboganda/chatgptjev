@@ -31,6 +31,14 @@ export interface LauncherState {
   sessionRefreshReminderAt: string | null;
 }
 
+export interface JevStatus {
+  /** False until the runtime config exists (before Codex setup). */
+  configured: boolean;
+  enabled: boolean;
+  /** AI_GATEWAY_API_KEY is visible to the launcher process (and therefore the runtime it starts). */
+  keyPresent: boolean;
+}
+
 export interface BrowserState {
   status: "idle" | "loading" | "signed-out" | "ready" | "testing" | "running" | "error";
   message: string;
@@ -159,6 +167,8 @@ export interface LauncherApi {
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
+  /** Read (no argument) or change Jev judgments; changing restarts the runtime. */
+  jev(enabled?: boolean): Promise<JevStatus>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{
     state: LauncherState;

@@ -22,6 +22,7 @@ import {
 } from "./codex-integration";
 import { formatDoctorReport, runDoctor } from "./doctor";
 import { classifyCrashLoop } from "./crash-judgments";
+import { judgeConfigured, judgeEnabled, onJudgeEvent } from "./lib/judge";
 import { explainCodexRouteConflict } from "./route-judgments";
 import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
 import { runCommand } from "./process";
@@ -66,6 +67,7 @@ Setup options:
                                Full mode: select, paste, and send in the launcher yourself
   --zero-risk-pro              Zero Risk: also install the explicit Pro-sized model row
   --zero-risk-default          Zero Risk: install only the default model row
+  --jev / --no-jev             Turn Jev judgments on (default) or off in every mode
   --port NUMBER                Loopback Responses port (default: 17851)
   --chrome PATH                Google Chrome/Chromium executable used for account login
   --browser-host-descriptor PATH
@@ -317,6 +319,10 @@ async function setupCommand(args: string[]): Promise<void> {
     throw new Error("Choose at most one Zero Risk model profile: --zero-risk-pro or --zero-risk-default");
   }
   if (zeroRiskPro || zeroRiskDefault) options.zeroRiskProEnabled = zeroRiskPro;
+  const jevOn = takeFlag(args, "--jev");
+  const jevOff = takeFlag(args, "--no-jev");
+  if (jevOn && jevOff) throw new Error("Choose --jev or --no-jev");
+  if (jevOn || jevOff) options.jevEnabled = jevOn;
   options.replaceCodexRoute = takeFlag(args, "--replace-codex-route");
   options.restartService = takeFlag(args, "--restart-service");
   assertNoArgs(args);
@@ -601,8 +607,12 @@ async function main(): Promise<void> {
   } else if (command === "serve") {
     assertNoArgs(args);
     const config = loadConfig();
+    onJudgeEvent(event => {
+      if (event.outcome === "cached" || event.outcome === "disabled") return;
+      console.warn(`[chatgpt-jev] jev ${event.site} ${event.outcome} ${Math.round(event.elapsedMs)}ms${event.answers ? ` ${JSON.stringify(event.answers)}` : ""}${event.error ? ` ${event.error}` : ""}`);
+    });
     const server = startServer(config);
-    stdout.write(`chatgpt-jev ${VERSION} listening on http://${config.host}:${server.port}/v1 (${config.mode})\n`);
+    stdout.write(`chatgpt-jev ${VERSION} listening on http://${config.host}:${server.port}/v1 (${config.mode}, jev ${judgeEnabled() ? "on" : judgeConfigured() ? "off" : "unconfigured"})\n`);
     await new Promise<void>(() => {});
   } else if (command === "dev") await runDevCommand(args);
   else if (command === "mcp") await runChatGptMcpMain(args);

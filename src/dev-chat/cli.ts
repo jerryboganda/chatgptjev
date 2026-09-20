@@ -358,6 +358,9 @@ export async function runDevCommand(args: string[]): Promise<void> {
     if (biggerContext && standardContext) {
       throw new Error("Choose at most one context mode: --bigger-context or --standard-context");
     }
+    const jevOn = takeFlag(args, "--jev");
+    const jevOff = takeFlag(args, "--no-jev");
+    if (jevOn && jevOff) throw new Error("Choose --jev or --no-jev");
     if (args.length > 0) throw new Error(`Unknown DEV setup arguments: ${args.join(" ")}`);
     const result = await setupDevProfile({
       mode: full ? "full" : "browser-only",
@@ -369,6 +372,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
         : {}),
       ...(biggerContext || standardContext ? { experimentalBiggerContext: biggerContext } : {}),
       ...(skillAttachments || inlineSkills ? { experimentalSkillAttachments: skillAttachments } : {}),
+      ...(jevOn || jevOff ? { jevEnabled: jevOn } : {}),
       ...(tunnelId ? { tunnelId } : {}),
       ...(runtimeKeyFile ? { runtimeKeyFile } : {}),
     });

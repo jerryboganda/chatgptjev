@@ -21,6 +21,7 @@ import {
 } from "../src/config";
 import { removeLegacyRuntimeArtifacts } from "../src/service";
 import { processRunning } from "../src/process";
+import { configureJudgeForTests, judgeEnabled } from "../src/lib/judge";
 import {
   CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
   CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL,
@@ -202,6 +203,36 @@ test("Zero Risk fails closed without the Launcher browser host", () => {
   writeFileSync(join(root, "config.json"), `${JSON.stringify(invalid)}\n`);
 
   expect(() => loadConfig()).toThrow("requires the launcher browser host");
+});
+
+test("jevEnabled is validated and can only switch Jev off for the loading process", () => {
+  const root = join(tmpdir(), `chatgpt-jev-jev-toggle-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CHATGPT_JEV_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const write = (jevEnabled: unknown) => writeFileSync(join(root, "config.json"), `${JSON.stringify({ ...defaultConfig("browser-only"), jevEnabled })}\n`);
+
+  write("yes");
+  expect(() => loadConfig()).toThrow("Invalid jevEnabled");
+
+  const restore = configureJudgeForTests({ enabled: true, apiKey: () => "test-key" });
+  try {
+    write(undefined);
+    expect(loadConfig().jevEnabled).toBeUndefined();
+    expect(judgeEnabled()).toBe(true);
+    write(true);
+    expect(loadConfig().jevEnabled).toBe(true);
+    expect(judgeEnabled()).toBe(true);
+    write(false);
+    expect(loadConfig().jevEnabled).toBe(false);
+    expect(judgeEnabled()).toBe(false);
+    // A later `true` does not re-enable a process that was switched off: the launcher restarts the runtime instead.
+    write(true);
+    loadConfig();
+    expect(judgeEnabled()).toBe(false);
+  } finally {
+    restore();
+  }
 });
 
 test("legacy temp-path wrapper and vendor are removed only after runtime ownership changes", () => {

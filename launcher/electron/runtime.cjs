@@ -1125,6 +1125,41 @@ class RuntimeHost {
     return { ...result, enabled: enabled === true };
   }
 
+  /** Jev (TypeSafe) judgments: stored in the runtime config, keyed by the user's AI_GATEWAY_API_KEY. */
+  jevStatus() {
+    const current = this.runtimeConfigSnapshot();
+    return {
+      configured: current.configured,
+      enabled: current.config ? current.config.jevEnabled !== false : true,
+      keyPresent: Boolean(process.env.AI_GATEWAY_API_KEY),
+    };
+  }
+
+  async setJev(enabled) {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Initialize the runtime before changing AI judgments");
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      enabled === true ? "--jev" : "--no-jev",
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const options = {
+      message: enabled ? "Enabling AI judgments" : "Disabling AI judgments",
+      successMessage: enabled ? "AI judgments enabled" : "AI judgments disabled",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = development
+      ? await this.runDevSetup("jev", args, options)
+      : await this.runSetup("jev", args, options);
+    return { ...result, ...this.jevStatus() };
+  }
+
   async setZeroRiskPro(enabled) {
     const current = this.runtimeConfigSnapshot();
     if (!current.configured) {

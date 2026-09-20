@@ -9,6 +9,7 @@ import {
 } from "./chatgpt-web-models";
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
+import { setJudgeEnabled } from "./lib/judge";
 
 export type RuntimeMode = "browser-only" | "full";
 export type BrowserHostMode = "managed-chrome" | "launcher";
@@ -90,6 +91,8 @@ export interface AppConfig {
   zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */
   stallTimeoutSec?: number;
+  /** Jev judgments (TypeSafe) in every mode including Zero Risk; omit or `true` = on, `false` = off. */
+  jevEnabled?: boolean;
   autoApproveToolCalls: boolean;
   controlToken: string;
   runtimeCommand: string[];
@@ -342,7 +345,11 @@ export function defaultChromeExecutable(
 export function loadConfig(): AppConfig {
   const path = getConfigPath();
   if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run chatgpt-jev setup first.`);
-  return parseConfig(JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))), path);
+  const config = parseConfig(JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))), path);
+  // Disable-only: every process that reads the config honours the launcher's Jev toggle, while the
+  // test default (off under NODE_ENV=test) can never be switched on by a config file.
+  if (config.jevEnabled === false) setJudgeEnabled(false);
+  return config;
 }
 
 export function loadConfigForSetup(): AppConfig {
@@ -503,6 +510,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.stallTimeoutSec !== undefined
     && (!Number.isFinite(parsed.stallTimeoutSec) || parsed.stallTimeoutSec <= 0)) {
     throw new Error(`Invalid stallTimeoutSec in ${path}`);
+  }
+  if (parsed.jevEnabled !== undefined && typeof parsed.jevEnabled !== "boolean") {
+    throw new Error(`Invalid jevEnabled in ${path}`);
   }
   const solAvailable = parsed.solAvailable !== false;
   const proAvailable = parsed.proAvailable === true;

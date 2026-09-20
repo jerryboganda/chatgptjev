@@ -1,4 +1,5 @@
-import { defaultBrokerEndpoint, resolveBrokerEndpoint } from "../../config";
+import { existsSync } from "node:fs";
+import { defaultBrokerEndpoint, getConfigPath, loadConfig, resolveBrokerEndpoint } from "../../config";
 import { runChatGptMcpServer, type ChatGptMcpContract } from "./mcp-server";
 
 function option(args: string[], name: string, fallback: string): string {
@@ -18,6 +19,8 @@ export async function runChatGptMcpMain(args: string[]): Promise<void> {
     throw new Error(`--contract must be native or safe, received ${requestedContract}`);
   }
   if (remaining.length > 0) throw new Error(`Unknown MCP arguments: ${remaining.join(" ")}`);
+  // The MCP process is otherwise config-free; reading the config only applies the Jev toggle.
+  if (existsSync(getConfigPath())) loadConfig();
   await runChatGptMcpServer({
     brokerSocketPath,
     contract: requestedContract as ChatGptMcpContract,

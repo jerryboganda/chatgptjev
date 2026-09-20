@@ -849,6 +849,14 @@ function registerIpc({ logger, stateStore }) {
     send("launcher:state-changed", state);
     return state;
   });
+  handle("launcher:jev", async (_event, enabled) => {
+    if (typeof enabled !== "boolean") return runtimeHost.jevStatus();
+    if (browserHost.activeTraceId || browserHost.currentOperation()) {
+      throw new Error("Finish or cancel active ChatGPT turns before changing AI judgments");
+    }
+    const result = await runtimeHost.setJev(enabled);
+    return { configured: result.configured, enabled: result.enabled, keyPresent: result.keyPresent };
+  });
   handle("launcher:zero-risk-pro", async (_event, enabled) => {
     const browserOperation = browserHost.currentOperation();
     if (browserHost.activeTraceId || browserOperation) {
