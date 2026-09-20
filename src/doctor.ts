@@ -13,6 +13,7 @@ import {
   readLauncherBrowserHostDescriptor,
 } from "./launcher-browser-host";
 import { processRunning } from "./process";
+import { jevAvailabilityCheck, triageDoctorChecks } from "./doctor-judgments";
 
 export type CheckStatus = "ok" | "warning" | "error";
 
@@ -105,7 +106,7 @@ export async function runDoctor(): Promise<DoctorReport> {
     checks.push({ id: "config", status: "ok", message: `Configuration is valid (${getConfigPath()})` });
   } catch (error) {
     checks.push({ id: "config", status: "error", message: "Configuration is invalid", detail: error instanceof Error ? error.message : String(error) });
-    return { ok: false, checks };
+    return finishDoctorReport(checks, undefined);
   }
 
   if (config.browserHost === "launcher") {
@@ -219,9 +220,17 @@ export async function runDoctor(): Promise<DoctorReport> {
     checks.push({ id: "tools", status: "warning", message: "Browser-only mode intentionally has no local tools or MCP tunnel" });
   }
 
+  return finishDoctorReport(checks, config.mode);
+}
+
+/** Item 18: the deterministic checks decide readiness; Jev only adds its status line and one root-cause hint. */
+async function finishDoctorReport(checks: DoctorCheck[], mode: AppConfig["mode"] | undefined): Promise<DoctorReport> {
+  checks.push(jevAvailabilityCheck());
+  const triage = await triageDoctorChecks(checks, mode);
+  if (triage) checks.push(triage);
   return {
     ok: !checks.some(check => check.status === "error"),
-    mode: config.mode,
+    ...(mode ? { mode } : {}),
     checks,
   };
 }
