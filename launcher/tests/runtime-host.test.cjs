@@ -731,6 +731,20 @@ test("integration removal rejects a command that leaves an inactive journal behi
   ]);
 });
 
+test("an inconsistent bridge route surfaces the runtime's Jev owner hint after the deterministic errors", async () => {
+  const { host } = hostFor({ mode: "browser-only", browserHost: "launcher" });
+  const conflict = "Codex openai_base_url changed after setup; refusing to overwrite the user's newer value";
+  const hint = "Jev: the route now looks owned by other wrapper. Only one program can own Codex's openai_base_url.";
+  host.run = async () => ({ stdout: JSON.stringify({ installed: true, active: true, errors: [conflict], hint }) });
+  await assert.rejects(host.bridgeStatus(), new RegExp(`^Error: Codex bridge route is inconsistent: ${conflict}; ${hint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+
+  host.run = async () => ({ stdout: JSON.stringify({ installed: true, active: true, errors: [conflict] }) });
+  await assert.rejects(host.bridgeStatus(), new RegExp(`^Error: Codex bridge route is inconsistent: ${conflict}$`));
+
+  host.run = async () => ({ stdout: JSON.stringify({ installed: true, active: true, errors: [], hint }) });
+  assert.deepEqual(await host.bridgeStatus(), { installed: true, active: true, errors: [], hint });
+});
+
 test("connector verification uses the current identity and rejects a legacy local runtime", () => {
   const full = hostFor({ mode: "full", appName: "Codex Jev" });
   assert.equal(full.host.mcpConnectorName(), "Codex Jev");

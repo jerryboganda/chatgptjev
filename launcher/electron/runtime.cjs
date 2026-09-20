@@ -153,7 +153,8 @@ function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = fal
     throw new Error("Codex bridge route status did not report whether the integration is installed");
   }
   if (Array.isArray(result.errors) && result.errors.length > 0) {
-    throw new Error(`Codex bridge route is inconsistent: ${result.errors.join("; ")}`);
+    const hint = typeof result.hint === "string" && result.hint ? `; ${result.hint}` : "";
+    throw new Error(`Codex bridge route is inconsistent: ${result.errors.join("; ")}${hint}`);
   }
   if (typeof expectedActive === "boolean" && result.active !== expectedActive) {
     throw new Error(`Codex bridge route remained ${result.active ? "connected" : "disconnected"}`);

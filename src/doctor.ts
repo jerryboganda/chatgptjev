@@ -3,6 +3,7 @@ import type { AppConfig } from "./config";
 import { getConfigDir, getConfigPath, loadConfig } from "./config";
 import { join } from "node:path";
 import { inspectCodexIntegration } from "./codex-integration";
+import { explainCodexRouteConflict } from "./route-judgments";
 import { browserLoginStateExists, loginVerificationMarkerPath } from "./browser-login";
 import { getServiceStatus } from "./service";
 import { tunnelStatus } from "./tunnel";
@@ -153,7 +154,8 @@ export async function runDoctor(): Promise<DoctorReport> {
   if (!codex.installed) {
     checks.push({ id: "codex", status: "error", message: "Codex model route is not installed" });
   } else if (codex.errors.length > 0) {
-    checks.push({ id: "codex", status: "error", message: "Codex integration is inconsistent", detail: codex.errors.join("; ") });
+    const hint = await explainCodexRouteConflict(codex);
+    checks.push({ id: "codex", status: "error", message: "Codex integration is inconsistent", detail: [...codex.errors, ...(hint ? [hint] : [])].join("; ") });
   } else {
     checks.push({ id: "codex", status: "ok", message: "Codex native model route is installed" });
   }

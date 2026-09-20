@@ -22,6 +22,7 @@ import {
 } from "./codex-integration";
 import { formatDoctorReport, runDoctor } from "./doctor";
 import { classifyCrashLoop } from "./crash-judgments";
+import { explainCodexRouteConflict } from "./route-judgments";
 import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
 import { runCommand } from "./process";
 import { startServer } from "./server";
@@ -388,13 +389,15 @@ async function routeCommand(args: string[]): Promise<void> {
   const action = args.shift() ?? "status";
   assertNoArgs(args);
   const result = action === "status"
-    ? (() => {
+    ? await (async () => {
         const status = inspectCodexIntegration();
+        const hint = await explainCodexRouteConflict(status);
         return {
           installed: status.installed,
           active: status.active,
           ...(status.routeUrl ? { routeUrl: status.routeUrl } : {}),
           errors: status.errors,
+          ...(hint ? { hint } : {}),
         };
       })()
     : action === "connect"
