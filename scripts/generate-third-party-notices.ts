@@ -17,6 +17,7 @@ const destinationArgument = argumentsList.find(argument => argument !== "--inclu
 const visited = new Map<string, { directory: string; manifest: PackageJson }>();
 const bundledLicenseOverrides = new Map([
   ["tiktoken@1.0.22", join(root, "LICENSES", "tiktoken-MIT.txt")],
+  ["@ai-sdk/provider-utils@5.0.45", join(root, "LICENSES", "ai-sdk-provider-utils-5.0.45-Apache-2.0.txt")],
 ]);
 
 function packageDirectory(name: string, from: string): string | undefined {
