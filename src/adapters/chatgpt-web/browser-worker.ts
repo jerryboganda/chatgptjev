@@ -24,6 +24,7 @@ import {
   throwIfChatGptJudgedFailureDialog,
   visibleChatGptDialogTexts,
 } from "./ui-judgments";
+import { ChatGptWidgetFilter } from "./widget-judgments";
 import type { CodexProviderConfig } from "../../types";
 import { parseDataUrl } from "../image";
 import {
@@ -4859,6 +4860,10 @@ export class ChatGptBrowserWorker {
       const sentAt = Date.now();
       const visibleTrace = new ChatGptVisibleTraceTracker();
       const markdownBuffer = new ChatGptMarkdownBuffer();
+      // Item 17: unrecognised widgets are judged before they can be committed to the stream.
+      const widgetFilter = new ChatGptWidgetFilter(excerpt => {
+        console.warn(`[chatgpt-web] browser turn ${turn.traceId}: Jev dropped an unrecognised ChatGPT widget from the answer: "${excerpt}"`);
+      });
       const checkpointStream = turn.captureLunaCheckpoint
         ? new ChatGptLunaCheckpointStream()
         : undefined;
@@ -5026,9 +5031,10 @@ export class ChatGptBrowserWorker {
             capturedResponse = true;
             await diagnostics.capture(page, "response-visible");
           }
+          const answerSegments = await widgetFilter.filter(snapshot.markdownSegments);
           const textDelta = (() => {
             try {
-              return markdownBuffer.observe(snapshot.markdownSegments);
+              return markdownBuffer.observe(answerSegments);
             } catch (error) {
               return throwMarkdownConsistencyError(error);
             }
