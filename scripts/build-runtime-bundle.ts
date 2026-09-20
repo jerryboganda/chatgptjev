@@ -159,6 +159,13 @@ function runtimeManifestFiles(): RuntimeManifestFile[] {
       const absolutePath = join(directory, entry.name);
       const relativePath = relative(output, absolutePath).split(sep).join("/");
       if (relativePath === "manifest.json") continue;
+      if (entry.name === ".gitkeep" || entry.name === ".DS_Store") {
+        // electron-builder's directory walk (builder-util `walk`) drops these names unconditionally
+        // while copying extraResources, so a manifest entry for them would fail installed-bundle
+        // validation ("Runtime bundle file is missing"). undici (via @ai-sdk/provider-utils) ships one.
+        rmSync(absolutePath);
+        continue;
+      }
       if (entry.isDirectory()) {
         visit(absolutePath);
         continue;
