@@ -1218,7 +1218,7 @@ describe("ChatGPT outer-native harness v4", () => {
       await createChatGptWebAdapter(provider).runTurn!(rawWireRequest(environmentXml),
         { headers: new Headers() }, event => events.push(event));
       expect(events.at(-1)).toMatchObject({ type: "error", code: "chatgpt_stopped_thinking", status: 502, retryable: false });
-      const response = buildResponseJSON(events, CHATGPT_WEB_MODEL_ID);
+      const response = await buildResponseJSON(events, CHATGPT_WEB_MODEL_ID);
       expect(response).toMatchObject({ status: "failed", retryable: false,
         error: { type: "server_error", code: "chatgpt_stopped_thinking" } });
       expect(JSON.stringify(response)).toContain("usage limit may have been reached");
@@ -1594,8 +1594,8 @@ describe("ChatGPT outer-native harness v4", () => {
     expect(imageUsage.inputTokens).toBeGreaterThanOrEqual(textUsage.inputTokens + 3_500);
   });
 
-  test("keeps the ChatGPT rate-limit dialog distinct from model capacity and UI failures", () => {
-    const rateLimit = buildResponseJSON([{
+  test("keeps the ChatGPT rate-limit dialog distinct from model capacity and UI failures", async () => {
+    const rateLimit = await buildResponseJSON([{
       type: "error",
       message: "ChatGPT rate limit: too many requests. Try again in a few minutes.",
       status: 429,
@@ -1613,7 +1613,7 @@ describe("ChatGPT outer-native harness v4", () => {
       error: { type: "rate_limit_error", code: "rate_limit_exceeded" },
     });
 
-    const missingEffort = buildResponseJSON([{
+    const missingEffort = await buildResponseJSON([{
       type: "error",
       message: "ChatGPT model controls are unavailable. Reload ChatGPT and retry the task.",
       status: 502,
@@ -1632,7 +1632,7 @@ describe("ChatGPT outer-native harness v4", () => {
     });
     expect(missingEffort.error.code).not.toBe("server_is_overloaded");
 
-    const contextWindow = buildResponseJSON([{
+    const contextWindow = await buildResponseJSON([{
       type: "error",
       message: "This task exceeds the 225,000-token context window. Switch models, run /compact, then retry.",
       status: 400,
@@ -1655,11 +1655,11 @@ describe("ChatGPT outer-native harness v4", () => {
     expect(contextWindow.error.message).toContain("/compact");
   });
 
-  test("returns one native compaction item with preserved estimated usage", () => {
+  test("returns one native compaction item with preserved estimated usage", async () => {
     const request = parsed();
     const summary = "Completed the tool loop; continue with the deployment check.";
     const usage = estimateChatGptWebUsage(request, { answer: summary }, toolCapabilities);
-    const response = buildResponseJSON([
+    const response = await buildResponseJSON([
       { type: "text_delta", text: "Completed the tool loop; ", phase: "final_answer" },
       { type: "text_delta", text: "continue with the deployment check.", phase: "final_answer" },
       { type: "done", stopReason: "stop", endTurn: true, usage },
@@ -2361,7 +2361,7 @@ describe("ChatGPT outer-native harness v4", () => {
       expect(firstDone.usage?.estimated).toBe(true);
       expect(Number.isFinite(firstDone.usage?.inputTokens)).toBe(true);
       expect(Number.isFinite(firstDone.usage?.outputTokens)).toBe(true);
-      const firstResponse = buildResponseJSON(firstEvents, "gpt-5.6-sol") as { output: Array<Record<string, unknown>>; usage: { total_tokens: number } };
+      const firstResponse = await buildResponseJSON(firstEvents, "gpt-5.6-sol") as { output: Array<Record<string, unknown>>; usage: { total_tokens: number } };
       expect(firstResponse.usage.total_tokens).toBeGreaterThan(0);
       expect(firstResponse.output.map(item => item.type)).toEqual(["reasoning", "reasoning", "function_call"]);
       expect(firstResponse.output[2]).toMatchObject({

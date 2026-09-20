@@ -660,7 +660,7 @@ export async function responseRequest(
 
   await run();
   const events = await queue.collect();
-  const json = buildResponseJSON(events, responseModel, {
+  const json = await buildResponseJSON(events, responseModel, {
     hideThinkingSummary: parsed.options.hideThinkingSummary,
     toolNsMap: maps.toolNsMap,
     freeformToolNames: maps.freeformToolNames,

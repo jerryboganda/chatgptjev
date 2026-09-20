@@ -1,5 +1,5 @@
 import type { AdapterEvent, CodexMessagePhase, CodexProviderContinuationState, CodexUsage } from "./types";
-import { adapterFailureFromMessage, classifyError, type CodexErrorPayload } from "./lib/errors";
+import { adapterFailureFromMessage, classifyError, judgeAdapterFailure, type CodexErrorPayload } from "./lib/errors";
 import { encodeCompactionSummary } from "./responses/compaction";
 import { encodeReasoningEnvelope, type ReasoningEnvelope } from "./responses/reasoning-envelope";
 import { resolveStallTimeoutSec } from "./stall-timeout";
@@ -43,16 +43,24 @@ function responseError(status: number, type: string, message: string): CodexErro
   return classifyError(status, type, message);
 }
 
-function adapterFailureFromEvent(event: Extract<AdapterEvent, { type: "error" }>): { httpStatus: number; error: CodexErrorPayload } {
+interface AdapterFailure {
+  httpStatus: number;
+  error: CodexErrorPayload;
+  /** Adapter-declared retryability first; Jev's decisive verdict when the adapter declared none. */
+  retryable?: boolean;
+}
+
+async function adapterFailureFromEvent(event: Extract<AdapterEvent, { type: "error" }>): Promise<AdapterFailure> {
   if (event.status === undefined && event.errorType === undefined && event.code === undefined) {
-    return adapterFailureFromMessage(event.message);
+    const judged = await judgeAdapterFailure(event.message);
+    return { httpStatus: judged.httpStatus, error: judged.error, retryable: event.retryable ?? judged.retryable };
   }
   const fallback = adapterFailureFromMessage(event.message);
   const httpStatus = event.status ?? fallback.httpStatus;
   const error = classifyError(httpStatus, event.errorType ?? fallback.error.type, event.message);
   if (event.errorType !== undefined) error.type = event.errorType;
   if (event.code !== undefined) error.code = event.code;
-  return { httpStatus, error };
+  return { httpStatus, error, retryable: event.retryable };
 }
 
 export { adapterFailureFromMessage } from "./lib/errors";
@@ -655,7 +663,7 @@ export function bridgeToResponsesSSE(
               if (currentRawReasoning) closeCurrentRawReasoning();
               flushHiddenRawReasoning();
               if (currentToolCall) closeCurrentToolCall();
-              const failure = adapterFailureFromEvent(event);
+              const failure = await adapterFailureFromEvent(event);
               emit("response.failed", {
                 response: {
                   ...responseSnapshot("failed", finishedItems),
@@ -664,7 +672,7 @@ export function bridgeToResponsesSSE(
                   ...(event.usage ? { usage: responsesUsage(event.usage) } : {}),
                   error: failure.error,
                   last_error: failure.error,
-                  ...(event.retryable !== undefined ? { retryable: event.retryable } : {}),
+                  ...(failure.retryable !== undefined ? { retryable: failure.retryable } : {}),
                 },
               });
               reportTerminal("failed");
@@ -847,7 +855,7 @@ export function bridgeToResponsesSSE(
   });
 }
 
-export function buildResponseJSON(
+export async function buildResponseJSON(
   events: AdapterEvent[],
   modelId: string,
   options?: {
@@ -859,7 +867,7 @@ export function buildResponseJSON(
     compaction?: boolean;
     onProviderState?: (state: CodexProviderContinuationState) => void;
   },
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   const responseId = `resp_${uuid()}`;
   const output: OutputItem[] = [];
   let usage: CodexUsage | undefined;
@@ -1049,7 +1057,7 @@ export function buildResponseJSON(
     output.push({ type: "compaction", id: `cmp_${uuid()}`, encrypted_content: encodeCompactionSummary(compactionText) });
   }
 
-  const failure = errorEvent ? adapterFailureFromEvent(errorEvent) : undefined;
+  const failure = errorEvent ? await adapterFailureFromEvent(errorEvent) : undefined;
   const status = errorEvent
     ? "failed"
     : incompleteEvent || stopReason === "max_tokens"
@@ -1062,7 +1070,7 @@ export function buildResponseJSON(
     model: modelId, output,
     ...(endTurn !== undefined ? { end_turn: endTurn } : {}),
     ...(failure ? { error: failure.error, last_error: failure.error } : {}),
-    ...(errorEvent?.retryable !== undefined ? { retryable: errorEvent.retryable } : {}),
+    ...(failure?.retryable !== undefined ? { retryable: failure.retryable } : {}),
     ...(incompleteEvent ? {
       incomplete_details: {
         reason: incompleteEvent.reason,

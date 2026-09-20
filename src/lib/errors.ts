@@ -1,3 +1,5 @@
+import { confidentBoolean, confidentChoice, judge } from "./judge";
+
 export interface CodexErrorPayload {
   message: string;
   type: string;
@@ -250,6 +252,92 @@ export function adapterFailureFromMessage(message: string): { httpStatus: number
   return {
     httpStatus,
     error: classifyError(httpStatus, errorType, finalMessage),
+  };
+}
+
+/** Codex's own error-code vocabulary, described for Jev. Descriptions are the criteria the model sees. */
+export const ADAPTER_FAILURE_CATEGORIES = {
+  client_closed_request: "The local client/Codex cancelled, aborted, or closed its own request. Not an upstream fault.",
+  context_length_exceeded: "The prompt, message, or conversation is too long / too many tokens for the model or composer.",
+  insufficient_quota: "A billing quota or allowance is exhausted (monthly/daily/plan credits), not a short-term rate limit.",
+  rate_limit_exceeded: "Too many requests or a temporary usage cap / cooldown; will clear with time.",
+  invalid_api_key: "Authentication problem: not signed in, session expired, invalid or expired credentials.",
+  subscription_required: "The feature or model needs a higher paid plan or subscription tier.",
+  permission_denied: "Access forbidden for reasons other than plan tier: account suspended, region blocked, policy, or feature disabled.",
+  server_is_overloaded: "Upstream is overloaded, at capacity, under high demand, or temporarily unavailable; retry later is appropriate.",
+  upstream_timeout: "A timeout or deadline expired while waiting on the remote side or browser.",
+  upstream_server_error: "A generic remote failure, network error, or 'something went wrong' with no more specific cause.",
+  invalid_request_error: "The request itself is malformed, references a missing resource, or uses an unsupported model/option.",
+  none: "None of the other categories fits, or the text is not an error message at all.",
+} as const;
+
+export type AdapterFailureCategory = keyof typeof ADAPTER_FAILURE_CATEGORIES;
+
+const CATEGORY_PAYLOAD: Record<Exclude<AdapterFailureCategory, "none">, { httpStatus: number; type: string; code: string }> = {
+  client_closed_request: { httpStatus: 499, type: "invalid_request_error", code: "client_closed_request" },
+  context_length_exceeded: { httpStatus: 400, type: "invalid_request_error", code: "context_length_exceeded" },
+  insufficient_quota: { httpStatus: 429, type: "insufficient_quota", code: "insufficient_quota" },
+  rate_limit_exceeded: { httpStatus: 429, type: "rate_limit_error", code: "rate_limit_exceeded" },
+  invalid_api_key: { httpStatus: 401, type: "authentication_error", code: "invalid_api_key" },
+  subscription_required: { httpStatus: 403, type: "permission_error", code: "subscription_required" },
+  permission_denied: { httpStatus: 403, type: "permission_error", code: "permission_denied" },
+  server_is_overloaded: { httpStatus: 503, type: "server_error", code: "server_is_overloaded" },
+  upstream_timeout: { httpStatus: 504, type: "server_error", code: "upstream_server_error" },
+  upstream_server_error: { httpStatus: 502, type: "server_error", code: "upstream_server_error" },
+  invalid_request_error: { httpStatus: 400, type: "invalid_request_error", code: "invalid_request_error" },
+};
+
+export interface JudgedAdapterFailure {
+  httpStatus: number;
+  error: CodexErrorPayload;
+  /** Jev's decisive verdicts only; `undefined` when uncertain or Jev was unavailable. */
+  retryable?: boolean;
+  userActionRequired?: boolean;
+  /** Which classifier produced the payload. */
+  source: "keywords" | "jev";
+}
+
+/**
+ * Message-only failure classification with Jev refining the keyword heuristic.
+ * Only used when the adapter supplied no authoritative status/type/code. Exact client-close
+ * phrases produced by our own handlers stay authoritative in code; everything else is free text
+ * from the ChatGPT UI, Playwright, or the network, where keyword rules misfile ~half of real cases.
+ */
+export async function judgeAdapterFailure(message: string): Promise<JudgedAdapterFailure> {
+  const fallback = adapterFailureFromMessage(message);
+  if (!message.trim() || fallback.httpStatus === 499) return { ...fallback, source: "keywords" };
+  const answers = await judge("adapter_failure", {
+    error_message: message,
+    source: "Error text surfaced by the ChatGPT web UI, the browser automation, or an upstream proxy while a Codex coding-agent turn was running.",
+  }, {
+    category: {
+      type: "choice",
+      instructions: "Which Codex error code best describes `error_message`?",
+      criteria: ADAPTER_FAILURE_CATEGORIES,
+    },
+    retryable: {
+      type: "boolean",
+      instructions: "Automatically retrying the same request after a short delay, without any user action, has a realistic chance of succeeding.",
+    },
+    user_action_required: {
+      type: "boolean",
+      instructions: "The user must do something (sign in, upgrade plan, change settings, shorten input) before this request can succeed.",
+    },
+  });
+  const retryable = confidentBoolean(answers?.retryable);
+  const userActionRequired = confidentBoolean(answers?.user_action_required);
+  const category = confidentChoice(answers?.category);
+  if (!category || category === "none") {
+    return { ...fallback, retryable, userActionRequired, source: "keywords" };
+  }
+  const mapped = CATEGORY_PAYLOAD[category];
+  return {
+    httpStatus: mapped.httpStatus,
+    error: { message: fallback.error.message, type: mapped.type, code: mapped.code },
+    // A user-blocking condition is never retryable, whatever the retry verdict says.
+    retryable: userActionRequired === true ? false : retryable,
+    userActionRequired,
+    source: "jev",
   };
 }
 
