@@ -8,6 +8,7 @@ import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
 import { callTurnBroker, TurnBrokerTimeoutError, type BrokerToolResult } from "./turn-broker";
 import { observeMcpToolCalls } from "./mcp-observation";
+import { judgeExecApproval, maskSecretsInToolResult } from "./tool-judgments";
 
 interface ClaimedTurn {
   bindingId: string;
@@ -559,7 +560,8 @@ export async function runChatGptMcpServer(options: {
         freeform: tool.freeform === true,
         ...(tool.freeform ? { input: payload.input ?? "" } : { arguments: payload.arguments ?? {} }),
       }, timeoutMs, signal);
-      return asMcpResult(response);
+      // Item 10: regex pass + Jev secret/PII gate before any tool output reaches ChatGPT's servers.
+      return await maskSecretsInToolResult(asMcpResult(response));
     } catch (error) {
       // A cancelled/timed-out MCP request no longer has a consumer for the native result. Revoke
       // the whole turn capability so the broker drops the pending invocation and every later call
@@ -637,10 +639,21 @@ export async function runChatGptMcpServer(options: {
       async claimed => {
         const { cmd, workdir, yield_time_ms, max_output_tokens, tty, sandbox_permissions, justification, prefix_rule } = input;
         const bound = claimed.environment;
+        const tool = exactTool(bound, "exec_command") ?? exactTool(bound, "shell_command");
+        // Jev annotates escalations (risk + justification check) and forces an approval prompt for
+        // injected-looking commands. Codex still decides; keys the native tool cannot express are dropped.
+        const verdict = await judgeExecApproval({ cmd, workdir, sandbox_permissions, justification });
+        const properties = tool?.parameters.properties;
+        const expressible = (key: string) => !tool || (!!properties && typeof properties === "object" && Object.hasOwn(properties, key));
+        const judged = Object.fromEntries(Object.entries(verdict.permissions).filter(([key]) => expressible(key)));
+        if (Object.keys(judged).length < Object.keys(verdict.permissions).length) {
+          console.warn(`[chatgpt-web-mcp] jev exec verdict dropped: native ${tool?.name} cannot express an approval request`);
+        }
         const permissions = {
           ...(sandbox_permissions !== undefined ? { sandbox_permissions } : {}),
           ...(justification !== undefined ? { justification } : {}),
           ...(prefix_rule !== undefined ? { prefix_rule } : {}),
+          ...judged,
         };
         const execCommandArguments = {
           cmd,
@@ -656,10 +669,8 @@ export async function runChatGptMcpServer(options: {
           ...(yield_time_ms !== undefined ? { timeout_ms: yield_time_ms } : {}),
           ...permissions,
         };
-        const tool = exactTool(bound, "exec_command") ?? exactTool(bound, "shell_command");
         if (tool) {
           // Never silently discard an approval request on a native registry that cannot express it.
-          const properties = tool.parameters.properties;
           for (const key of Object.keys(permissions)) {
             if (!properties || typeof properties !== "object" || !Object.hasOwn(properties, key)) {
               throw new Error(`The current native ${tool.name} tool does not support ${key}`);
