@@ -45,6 +45,8 @@ import {
   settleActiveCompactionSource,
   settleActiveZeroRiskCompactionSource,
 } from "./compaction-handoff";
+import { judgeCompactionHandoff } from "./compaction-judgments";
+import { suggestEffortTier } from "./effort-judgments";
 import {
   chatGptConversationKey,
   retainedConversationResumeRequest,
@@ -829,6 +831,12 @@ export function createChatGptWebAdapter(
         const mode = manualRequest
           ? { localTools: true }
           : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
+        if (!manualRequest && !parsed._compactionRequest && "effort" in mode) {
+          // Item 13: off the critical path; a suggestion only, the routed model still fixes the effort.
+          void suggestEffortTier(parsed.context.messages, mode.effort).then(suggestion => {
+            if (suggestion) console.warn(`[chatgpt-jev] effort suggestion: ${suggestion}`);
+          });
+        }
         const structuredOutputValidator = parsed._compactionRequest
           ? undefined
           : createChatGptStructuredOutputValidator(parsed.options.outputFormat);
@@ -1038,6 +1046,9 @@ export function createChatGptWebAdapter(
                       );
                     }
                     const summary = canonicalizeCompactionHandoff(parsed, rawSummary);
+                    // Item 15: judge the handoff before the retained conversation is retired so a
+                    // summary that would lose the thread is re-summarized once (fail-open on doubt).
+                    const verdict = await judgeCompactionHandoff(parsed, summary);
                     await withAbort(
                       preserveFinalResponse
                         ? chatGptTurnSessions.retireConversationPreservingFinalResponse(
@@ -1048,6 +1059,10 @@ export function createChatGptWebAdapter(
                         : chatGptTurnSessions.retireConversationAndWait(retainedKey),
                       operationSignal,
                     );
+                    if (!verdict.acceptable) {
+                      console.warn(`[chatgpt-web] jev rejected compaction handoff: ${verdict.reasons.join("; ")}`);
+                      return await runFreshCompactionFallback("jev_rejected_handoff");
+                    }
                     return summary;
                   } catch (error) {
                     const retainedKey = source?.conversationKey();
@@ -1165,9 +1180,10 @@ export function createChatGptWebAdapter(
               session.completeRound(roundKey);
               return;
             }
-            const settled = session.settledOutcome();
-            if (settled) {
-              if (settled.type === "error") throw settled.error;
+            const settledOutcome = session.settledOutcome();
+            if (settledOutcome) {
+              if (settledOutcome.type === "error") throw settledOutcome.error;
+              let settled = settledOutcome;
               const trace = session.runtime.trace.drain();
               const completedTextDeltas = session.runtime.text.drain();
               const finalReplay = replay.length === 0
@@ -1191,7 +1207,9 @@ export function createChatGptWebAdapter(
               if (session.runtime.text.value() !== settled.answer) {
                 throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
               }
-              structuredOutputValidator?.(settled.answer);
+              if (structuredOutputValidator) {
+                settled = { ...settled, answer: await structuredOutputValidator(settled.answer) };
+              }
               if (bufferStructuredOutput) {
                 emitRoundBatch(buffer => emitTextDeltas([settled.answer], buffer));
               }
@@ -1287,7 +1305,7 @@ export function createChatGptWebAdapter(
                 : undefined;
               let nextTools = armNextTools();
               const browserOutcome = session.browserOutcome.then(outcome => ({ type: "browser" as const, outcome }));
-              const finishBrowserOutcome = async (completedOutcome: ChatGptBrowserOutcome): Promise<void> => {
+              const finishBrowserOutcome = async (browserCompleted: ChatGptBrowserOutcome): Promise<void> => {
                 // Zero Risk completion and its owner-only empty-batch signal are resolved by the
                 // same broker transition. Drain once more so the accepted final answer cannot be
                 // overtaken by the terminal owner notification.
@@ -1296,11 +1314,14 @@ export function createChatGptWebAdapter(
                 session.setFinalReasoning(roundReasoning);
                 session.setFinalEvents(session.roundEvents(roundKey));
                 if (turnToken) await broker.revoke(turnToken);
-                if (completedOutcome.type === "error") throw completedOutcome.error;
+                if (browserCompleted.type === "error") throw browserCompleted.error;
+                let completedOutcome = browserCompleted;
                 if (session.runtime.text.value() !== completedOutcome.answer) {
                   throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
                 }
-                structuredOutputValidator?.(completedOutcome.answer);
+                if (structuredOutputValidator) {
+                  completedOutcome = { ...completedOutcome, answer: await structuredOutputValidator(completedOutcome.answer) };
+                }
                 if (bufferStructuredOutput) {
                   emitRoundBatch(buffer => emitTextDeltas([completedOutcome.answer], buffer));
                 }

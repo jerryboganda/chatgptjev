@@ -28,7 +28,7 @@ test("verbosity and JSON-schema controls survive parser-to-prompt transport", ()
   expect(compiled.text).toContain(JSON.stringify(schema));
 });
 
-test("strict JSON validation accepts only the exact full schema-conforming answer", () => {
+test("strict JSON validation accepts the exact answer, repairs wrapped JSON, and rejects wrong content", async () => {
   const validate = createChatGptStructuredOutputValidator({
     type: "json_schema",
     name: "payload",
@@ -40,13 +40,18 @@ test("strict JSON validation accepts only the exact full schema-conforming answe
       additionalProperties: false,
     },
   })!;
-  expect(() => validate('{"ok":true,"count":2}')).not.toThrow();
-  for (const invalid of [
+  expect(await validate('{"ok":true,"count":2}')).toBe('{"ok":true,"count":2}');
+  for (const wrapped of [
     'prefix {"ok":true,"count":2}',
     '```json\n{"ok":true,"count":2}\n```',
+    'Here you go:\n\n```\n{"ok":true,"count":2}\n```\n\nLet me know if you need changes.',
+  ]) expect(await validate(wrapped)).toBe('{"ok":true,"count":2}');
+  for (const invalid of [
     '{"ok":"yes","count":2}',
     '{"ok":true,"count":2,"extra":1}',
-  ]) expect(() => validate(invalid)).toThrow(ChatGptWebAdapterError);
+    '{"ok":true,"count":',
+    "I cannot produce that.",
+  ]) await expect(validate(invalid)).rejects.toThrow(ChatGptWebAdapterError);
 });
 
 test("non-strict JSON schema does not install a local output validator", () => {
@@ -139,5 +144,12 @@ test("adapter emits one validated strict JSON final answer only after completion
   const events = await runStrictAdapterAnswer(answer);
   expect(events.filter(event => event.type === "text_delta" && event.phase === "final_answer"))
     .toEqual([{ type: "text_delta", text: answer, phase: "final_answer" }]);
+  expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+});
+
+test("adapter emits the repaired JSON when ChatGPT wrapped a valid strict answer in fences and prose", async () => {
+  const events = await runStrictAdapterAnswer('Sure! Here is the payload:\n\n```json\n{"ok":true}\n```\n\nAnything else?');
+  expect(events.filter(event => event.type === "text_delta" && event.phase === "final_answer"))
+    .toEqual([{ type: "text_delta", text: '{"ok":true}', phase: "final_answer" }]);
   expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
 });
