@@ -16,6 +16,7 @@ import {
 } from "../../config";
 import { estimateTokens } from "../../lib/token-estimate";
 import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
+import { learnStoppedThinkingLabels, learnedStoppedThinkingLabels, throwIfChatGptJudgedFailureDialog } from "./ui-judgments";
 import type { CodexProviderConfig } from "../../types";
 import { parseDataUrl } from "../image";
 import {
@@ -793,11 +794,14 @@ export async function throwIfChatGptSessionFailureAlert(page: Page): Promise<voi
       { status: 401, errorType: "authentication_error", code: "chatgpt_session_expired", retryable: false },
     );
   }
-  if (!await chatGptSubscriptionFailureAlert(page).isVisible().catch(() => false)) return;
-  throw new ChatGptWebAdapterError(
-    "ChatGPT could not load the account subscription. Reload ChatGPT inside the launcher and retry; sign out only if the error persists.",
-    { status: 503, errorType: "server_error", code: "chatgpt_subscription_unavailable", retryable: true },
-  );
+  if (await chatGptSubscriptionFailureAlert(page).isVisible().catch(() => false)) {
+    throw new ChatGptWebAdapterError(
+      "ChatGPT could not load the account subscription. Reload ChatGPT inside the launcher and retry; sign out only if the error persists.",
+      { status: 503, errorType: "server_error", code: "chatgpt_subscription_unavailable", retryable: true },
+    );
+  }
+  // Exact locale regexes above are authoritative; Jev classifies whatever alert/dialog text they missed.
+  await throwIfChatGptJudgedFailureDialog(page);
 }
 
 const chatGptTerminalErrorAlert = (scope: ChatGptTextScope): Locator => scope
@@ -4187,7 +4191,7 @@ export class ChatGptBrowserWorker {
       };
     }, {
       completionActionSelector: CHATGPT_COMPLETION_ACTION_SELECTOR,
-      stoppedThinkingLabels: [...CHATGPT_STOPPED_THINKING_LABELS],
+      stoppedThinkingLabels: [...CHATGPT_STOPPED_THINKING_LABELS, ...learnedStoppedThinkingLabels],
       knownKey: cache?.key,
       attributeFilter: [...CHATGPT_DOM_REVISION_ATTRIBUTES],
     }, { timeout: 2_000 }).catch(() => undefined);
@@ -4208,6 +4212,9 @@ export class ChatGptBrowserWorker {
     snapshot.traceBlocks = snapshot.traceBlocks
       .map(stripChatGptTraceControlSuffix)
       .filter(block => block.text.length > 0 && !isChatGptTraceControl(block));
+    if (!snapshot.stoppedThinkingVisible) {
+      learnStoppedThinkingLabels(snapshot.traceBlocks.filter(block => block.kind === "status").map(block => block.text));
+    }
     return snapshot;
   }
 
