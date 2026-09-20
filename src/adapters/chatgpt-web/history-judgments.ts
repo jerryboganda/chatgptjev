@@ -1,5 +1,5 @@
 import type { CodexMessage, CodexParsedRequest } from "../../types";
-import { judge, judgeConfigured, judgeEnabled, nearestScoreLevel } from "../../lib/judge";
+import { judge, nearestScoreLevel } from "../../lib/judge";
 import {
   compileChatGptWebPrompt,
   isCompactionCheckpointMessage,
@@ -15,7 +15,7 @@ import type { ChatGptWebCapabilities } from "./model";
  * split) oldest-first, protecting the newest cumulative checkpoint and the final compaction
  * instruction. Jev only changes *which* records go first: the ones whose loss would cost the
  * checkpoint summary the least. Byte accounting, protections, and the omission notice stay in
- * code; without Jev the order is exactly the upstream oldest-first behaviour.
+ * code; a failed Jev decision stops compaction without discarding history.
  */
 
 /** Loss levels, least costly first (Jev score = 0-based level index). */
@@ -27,7 +27,7 @@ export const HISTORY_LOSS_LEVELS = [
   "Everything: the summary cannot be written correctly without this record.",
 ] as const;
 
-/** Only this many records are ranked; anything older than the ranked window is dropped first anyway. */
+/** Maximum records per batch; every unprotected record is ranked. */
 export const MAX_RANKED_HISTORY_RECORDS = 40;
 const MAX_RECORD_TEXT = 600;
 const HISTORY_JUDGE_TIMEOUT_MS = 4_000;
@@ -42,37 +42,32 @@ function recordText(message: CodexMessage): string {
 }
 
 /**
- * Indexes into `messages`, least valuable first, for the trimming loop to consult before its
- * oldest-first fallback. `protectedIndexes` (checkpoint, final instruction) are never returned.
- * Resolves to `undefined` when Jev is off, unsure about everything, or fails. Never throws.
+ * Indexes into `messages`, least valuable first. Protected checkpoints and final instructions
+ * are never returned; missing or failed judgments stop compaction.
  */
 export async function rankCompactionDiscardOrder(
   messages: readonly CodexMessage[],
   protectedIndexes: readonly number[],
-): Promise<number[] | undefined> {
-  if (!judgeEnabled() || !judgeConfigured()) return undefined;
+): Promise<number[]> {
   const protectedSet = new Set(protectedIndexes);
   const candidates = messages
     .map((message, index) => ({ index, message }))
-    .filter(({ index }) => !protectedSet.has(index))
-    .slice(-MAX_RANKED_HISTORY_RECORDS);
-  if (candidates.length < 2) return undefined;
+    .filter(({ index }) => !protectedSet.has(index));
   const finalInstruction = messages[messages.length - 1];
-  const questions = Object.fromEntries(candidates.map(({ index }) => [
-    `record_${index}`,
-    { type: "score", instructions: `How much would the checkpoint summary lose if record ${index} were omitted?`, criteria: HISTORY_LOSS_LEVELS },
-  ] as const)) as Record<string, { type: "score"; instructions: string; criteria: typeof HISTORY_LOSS_LEVELS }>;
-  const answers = await judge("compaction_history_relevance", {
-    compaction_instruction: finalInstruction ? recordText(finalInstruction) : "",
-    records: candidates.map(({ index, message }) => ({ index, role: message.role, text: recordText(message) })),
-    source: "A coding agent's conversation history must be summarised into a checkpoint, but it does not fit the browser message budget, so whole records have to be dropped before summarising. Rate each record by how much the summary would lose without it.",
-  }, questions, { timeoutMs: HISTORY_JUDGE_TIMEOUT_MS }).catch(() => undefined);
-  if (!answers) return undefined;
-  const ranked = candidates.flatMap(({ index }) => {
-    const level = nearestScoreLevel(answers[`record_${index}`], HISTORY_LOSS_LEVELS.length);
-    return level === undefined ? [] : [{ index, level }];
-  });
-  if (ranked.length === 0) return undefined;
+  const ranked: Array<{ index: number; level: number }> = [];
+  for (let offset = 0; offset < candidates.length; offset += MAX_RANKED_HISTORY_RECORDS) {
+    const batch = candidates.slice(offset, offset + MAX_RANKED_HISTORY_RECORDS);
+    const questions = Object.fromEntries(batch.map(({ index }) => [
+      `record_${index}`,
+      { type: "score", instructions: `How much would the checkpoint summary lose if record ${index} were omitted?`, criteria: HISTORY_LOSS_LEVELS },
+    ] as const)) as Record<string, { type: "score"; instructions: string; criteria: typeof HISTORY_LOSS_LEVELS }>;
+    const answers = await judge("compaction_history_relevance", {
+      compaction_instruction: finalInstruction ? recordText(finalInstruction) : "",
+      records: batch.map(({ index, message }) => ({ index, role: message.role, text: recordText(message) })),
+      source: "A coding agent's conversation history must be summarised into a checkpoint, but it does not fit the browser message budget, so whole records have to be dropped before summarising. Rate each record by how much the summary would lose without it.",
+    }, questions, { timeoutMs: HISTORY_JUDGE_TIMEOUT_MS });
+    ranked.push(...batch.map(({ index }) => ({ index, level: nearestScoreLevel(answers[`record_${index}`], HISTORY_LOSS_LEVELS.length) })));
+  }
   // Stable: equal loss falls back to the upstream order (older first).
   return ranked.sort((a, b) => a.level - b.level || a.index - b.index).map(entry => entry.index);
 }
@@ -98,7 +93,6 @@ export async function compileChatGptWebPromptWithRelevanceTrimming(
   if (!parsed._compactionRequest || !first.trimmedCompactionMessages) return first;
   const messages = withoutSupersededModelSwitchContracts(parsed.context.messages);
   const order = await rankCompactionDiscardOrder(messages, protectedCompactionIndexes(messages, isCompactionCheckpointMessage));
-  if (!order) return first;
   const second = compileChatGptWebPrompt(parsed, capabilities, turnToken, { ...options, compactionDiscardOrder: order });
   console.warn(`[chatgpt-jev] compaction trimming dropped ${second.trimmedCompactionMessages ?? 0} record(s) in Jev relevance order instead of oldest-first`);
   return second;

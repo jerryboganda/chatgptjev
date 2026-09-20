@@ -1,12 +1,12 @@
 import type { CheckStatus, DoctorCheck } from "./doctor";
-import { confidentChoice, judge, judgeConfigured, judgeEnabled } from "./lib/judge";
+import { confidentChoice, judge, judgeConfigured, judgeEnabled, JevDecisionError } from "./lib/judge";
 
 /**
  * Item 18: doctor triage. `doctor` lists every failing check, but the checks are symptoms of one
  * another (a missing route makes the catalog check fail, a dead daemon makes the tunnel look down).
  * Jev reads the failing checks together and names the single most likely root cause, mapped to the
  * matching TROUBLESHOOTING.md section. Deterministic checks are never changed; the triage is one
- * extra advisory line, and an unsure or unavailable Jev adds nothing.
+ * extra advisory line. Required triage failures are reported alongside the deterministic checks.
  */
 
 const TROUBLESHOOTING = "https://github.com/miuuyy/codex-chatgpt-web/blob/main/TROUBLESHOOTING.md";
@@ -51,17 +51,17 @@ export const JEV_CHECK_ID = "jev";
 const MAX_CHECK_DETAIL = 600;
 const DOCTOR_JUDGE_TIMEOUT_MS = 4_000;
 
-/** Reports whether Jev judgments are active for this process; never an error, doctor stays deterministic. */
+/** Reports whether required Jev judgments are available to this process. */
 export function jevAvailabilityCheck(): DoctorCheck {
   if (!judgeConfigured()) {
     return {
       id: JEV_CHECK_ID,
-      status: "warning",
+      status: "error",
       message: "Jev judgments are inactive: AI_GATEWAY_API_KEY is not set for this process",
-      detail: "The bridge works without it; only the Jev-powered classifications fall back to their fixed rules.",
+      detail: "Set AI_GATEWAY_API_KEY in the runtime environment and restart. Required semantic decisions cannot continue without Jev.",
     };
   }
-  if (!judgeEnabled()) return { id: JEV_CHECK_ID, status: "warning", message: "Jev judgments are disabled in configuration" };
+  if (!judgeEnabled()) return { id: JEV_CHECK_ID, status: "error", message: "Required Jev judgments are disabled" };
   return { id: JEV_CHECK_ID, status: "ok", message: "Jev judgments are configured" };
 }
 
@@ -71,30 +71,34 @@ export async function triageDoctorChecks(
   mode: string | undefined,
 ): Promise<DoctorCheck | undefined> {
   const failing = checks.filter(check => check.status === "error");
-  if (failing.length === 0 || !judgeEnabled() || !judgeConfigured()) return undefined;
-  const answers = await judge("doctor_triage", {
-    mode: mode ?? "unknown",
-    failing_checks: failing.map(check => ({
-      id: check.id,
-      message: check.message,
-      ...(check.detail ? { detail: check.detail.slice(0, MAX_CHECK_DETAIL) } : {}),
-    })),
-    passing_check_ids: checks.filter(check => check.status !== "error").map(check => check.id),
-    source: "Output of the ChatGPT Jev `doctor` command: a local bridge that routes Codex through a ChatGPT browser session. Checks fail together when they share a cause.",
-  }, {
-    root_cause: {
-      type: "choice",
-      instructions: "Which single underlying problem best explains all of the failing checks together, given the passing ones?",
-      criteria: Object.fromEntries(Object.entries(DOCTOR_ROOT_CAUSES).map(([kind, cause]) => [kind, cause.description])) as Record<DoctorRootCause, string>,
-    },
-  }, { timeoutMs: DOCTOR_JUDGE_TIMEOUT_MS }).catch(() => undefined);
-  const kind = confidentChoice(answers?.root_cause);
-  if (!kind) return undefined;
-  const cause = DOCTOR_ROOT_CAUSES[kind];
-  return {
-    id: DOCTOR_TRIAGE_CHECK_ID,
-    status: "warning" satisfies CheckStatus,
-    message: `Jev: most likely root cause is ${kind.replace(/_/g, " ")}`,
-    detail: `${cause.fix} See ${TROUBLESHOOTING}#${cause.anchor}`,
-  };
+  if (failing.length === 0) return undefined;
+  try {
+    const answers = await judge("doctor_triage", {
+      mode: mode ?? "unknown",
+      failing_checks: failing.map(check => ({
+        id: check.id,
+        message: check.message,
+        ...(check.detail ? { detail: check.detail.slice(0, MAX_CHECK_DETAIL) } : {}),
+      })),
+      passing_check_ids: checks.filter(check => check.status !== "error").map(check => check.id),
+      source: "Output of the ChatGPT Jev `doctor` command: a local bridge that routes Codex through a ChatGPT browser session. Checks fail together when they share a cause.",
+    }, {
+      root_cause: {
+        type: "choice",
+        instructions: "Which single underlying problem best explains all of the failing checks together, given the passing ones?",
+        criteria: Object.fromEntries(Object.entries(DOCTOR_ROOT_CAUSES).map(([kind, cause]) => [kind, cause.description])) as Record<DoctorRootCause, string>,
+      },
+    }, { timeoutMs: DOCTOR_JUDGE_TIMEOUT_MS });
+    const kind = confidentChoice(answers.root_cause);
+    const cause = DOCTOR_ROOT_CAUSES[kind];
+    return {
+      id: DOCTOR_TRIAGE_CHECK_ID,
+      status: "warning" satisfies CheckStatus,
+      message: `Jev: most likely root cause is ${kind.replace(/_/g, " ")}`,
+      detail: `${cause.fix} See ${TROUBLESHOOTING}#${cause.anchor}`,
+    };
+  } catch (error) {
+    if (!(error instanceof JevDecisionError)) throw error;
+    return { id: DOCTOR_TRIAGE_CHECK_ID, status: "error", message: error.message };
+  }
 }

@@ -15,6 +15,7 @@ import {
 } from "./launcher-browser-host";
 import { processRunning } from "./process";
 import { jevAvailabilityCheck, triageDoctorChecks } from "./doctor-judgments";
+import { JevDecisionError } from "./lib/judge";
 
 export type CheckStatus = "ok" | "warning" | "error";
 
@@ -154,8 +155,17 @@ export async function runDoctor(): Promise<DoctorReport> {
   if (!codex.installed) {
     checks.push({ id: "codex", status: "error", message: "Codex model route is not installed" });
   } else if (codex.errors.length > 0) {
-    const hint = await explainCodexRouteConflict(codex);
-    checks.push({ id: "codex", status: "error", message: "Codex integration is inconsistent", detail: [...codex.errors, ...(hint ? [hint] : [])].join("; ") });
+    const check: DoctorCheck = { id: "codex", status: "error", message: "Codex integration is inconsistent", detail: codex.errors.join("; ") };
+    checks.push(check);
+    try {
+      const hint = await explainCodexRouteConflict(codex);
+      if (hint) check.detail += `; ${hint}`;
+    } catch (error) {
+      checks.push({
+        id: "jev-route-owner", status: "error",
+        message: error instanceof JevDecisionError ? error.message : "Jev route-owner diagnosis failed; the route conflict remains unresolved",
+      });
+    }
   } else {
     checks.push({ id: "codex", status: "ok", message: "Codex native model route is installed" });
   }

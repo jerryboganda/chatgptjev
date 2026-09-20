@@ -17,6 +17,23 @@ import { compileChatGptWebPrompt, formatChatGptWebMultipartCommit, formatChatGpt
 import { estimateCompiledChatGptWebInputTokens } from "../src/adapters/chatgpt-web/input-tokens";
 import { estimateTokens } from "../src/lib/token-estimate";
 import { chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
+import ts from "typescript";
+
+test("required Jev observation calls are directly awaited without catch-and-continue", () => {
+  const path = join(import.meta.dir, "../src/adapters/chatgpt-web/browser-worker.ts");
+  const source = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
+  const required = new Set(["learnStoppedThinkingLabels", "judgeAnswerRootPromotion", "stalledTurnFailure"]);
+  const found = new Set<string>();
+  const inspect = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && required.has(node.expression.text)) {
+      expect(ts.isAwaitExpression(node.parent)).toBeTrue();
+      found.add(node.expression.text);
+    }
+    ts.forEachChild(node, inspect);
+  };
+  inspect(source);
+  expect(found).toEqual(required);
+});
 
 function personalizedTemporaryChatRole(
   _role: string,

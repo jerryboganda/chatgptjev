@@ -83,7 +83,7 @@ test("Jev ranks unprotected records least valuable first and stays stable for eq
   expect((jev.seen[0]!.questions.record_2 as { criteria: unknown }).criteria).toBe(HISTORY_LOSS_LEVELS);
 });
 
-test("the newest checkpoint and the final instruction are protected; unsure, failing, tiny, or disabled cases yield no order", async () => {
+test("protected records survive and missing, failed, or disabled judgments cannot choose an order", async () => {
   const checkpoint: CodexMessage = { role: "user", content: `${SUMMARY_PREFIX}\n\nVerified cumulative scope`, timestamp: 2 };
   const messages: CodexMessage[] = [
     { role: "developer", content: "note", timestamp: 1 },
@@ -101,27 +101,28 @@ test("the newest checkpoint and the final instruction are protected; unsure, fai
   restore();
 
   restore = withJev({}).restore;
-  expect(await rankCompactionDiscardOrder(messages, [1, 3])).toBeUndefined();
+  await expect(rankCompactionDiscardOrder(messages, [1, 3])).rejects.toThrow(/Jev/);
   restore();
   restore = withJev(() => { throw new Error("gateway down"); }).restore;
-  expect(await rankCompactionDiscardOrder(messages, [1, 3])).toBeUndefined();
+  await expect(rankCompactionDiscardOrder(messages, [1, 3])).rejects.toThrow(/Jev.*failed/);
   restore();
   restore = withJev({ 0: 0, 2: 0 }).restore;
-  expect(await rankCompactionDiscardOrder(messages, [0, 1, 3])).toBeUndefined();
+  expect(await rankCompactionDiscardOrder(messages, [0, 1, 3])).toEqual([2]);
   restore();
   const off = withJev({ 0: 0, 2: 0 }, false);
   restore = off.restore;
-  expect(await rankCompactionDiscardOrder(messages, [1, 3])).toBeUndefined();
+  await expect(rankCompactionDiscardOrder(messages, [1, 3])).rejects.toThrow(/Jev.*disabled/);
   expect(off.seen).toHaveLength(0);
 });
 
-test("only the newest ranked window is judged; older records fall back to oldest-first", async () => {
+test("every unprotected record is judged in bounded batches", async () => {
   const jev = withJev(Object.fromEntries(Array.from({ length: 200 }, (_, index) => [index, 2])));
   restore = jev.restore;
   const messages: CodexMessage[] = Array.from({ length: 60 }, (_, index) => ({ role: "developer" as const, content: `note-${index}`, timestamp: index }));
   const order = await rankCompactionDiscardOrder(messages, [59]);
-  expect(order).toHaveLength(MAX_RANKED_HISTORY_RECORDS);
-  expect(order![0]).toBe(59 - MAX_RANKED_HISTORY_RECORDS);
+  expect(order).toEqual(Array.from({ length: 59 }, (_, index) => index));
+  expect(jev.seen).toHaveLength(2);
+  expect(jev.seen.every(call => Object.keys(call.questions).length <= MAX_RANKED_HISTORY_RECORDS)).toBe(true);
 });
 
 test("compaction trimming follows the discard order, skips protected records, then falls back to oldest-first", () => {
@@ -172,7 +173,6 @@ test("the async compile asks Jev only after a compaction prompt had to trim, the
 
   const off = withJev({ 2: 0 }, false);
   restore = off.restore;
-  const fallback = await compileChatGptWebPromptWithRelevanceTrimming(compactionRequest(), capabilities);
-  expect(fallback).toEqual(compileChatGptWebPrompt(compactionRequest(), capabilities));
+  await expect(compileChatGptWebPromptWithRelevanceTrimming(compactionRequest(), capabilities)).rejects.toThrow(/Jev.*disabled/);
   expect(off.seen).toHaveLength(0);
 });

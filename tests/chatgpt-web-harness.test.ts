@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { createHash } from "node:crypto";
@@ -27,7 +27,13 @@ import { defaultBrokerEndpoint } from "../src/config";
 import { estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
 import { decodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
 import { parseRequest } from "../src/responses/parser";
+import { configureJudgeForTests, JevDecisionError } from "../src/lib/judge";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig, CodexTool } from "../src/types";
+import { installJevFixture } from "./fixtures/jev";
+
+let restoreIntegrationJudge: () => void;
+beforeEach(() => { restoreIntegrationJudge = installJevFixture(); });
+afterEach(() => restoreIntegrationJudge());
 
 const tempRoot = join(tmpdir(), `chatgpt-jev-harness-${process.pid}-${Date.now()}`);
 mkdirSync(tempRoot, { recursive: true });
@@ -1156,6 +1162,96 @@ describe("ChatGPT outer-native harness v4", () => {
       expect(browserStarts).toBe(1);
     } finally {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+    }
+  });
+
+  test.each([false, true])("browser-only compaction holds text until Jev accepts it (rejected=%s)", async rejected => {
+    let judgments = 0;
+    const restoreJudge = configureJudgeForTests({
+      enabled: true,
+      apiKey: () => "fixture-key",
+      evaluate: (async ({ questions }: { questions: Record<string, { type: string }> }) => {
+        judgments += 1;
+        return {
+          answers: Object.fromEntries(Object.entries(questions).map(([key, question]) => [key, question.type === "score"
+            ? { type: "score", score: rejected ? 0 : 2 }
+            : { type: "boolean", probability: key === "introduces_contradiction" ? 0.01 : 0.99 }])),
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      }) as never,
+    });
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web", baseUrl: `browser://jev-compact-${rejected}-${Date.now()}`,
+      chatgptWeb: { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run.bind(worker);
+    const events: AdapterEvent[] = [];
+    worker.run = async turn => {
+      turn.onSubmitted?.();
+      turn.onTextDelta("Review the pending task and continue.");
+      await Promise.resolve();
+      expect(events.some(event => event.type === "text_delta")).toBeFalse();
+      return "Review the pending task and continue.";
+    };
+    try {
+      const request = rawWireRequest(environmentXml);
+      request._compactionRequest = true;
+      const adapter = createChatGptWebAdapter(provider);
+      await adapter.runTurn!(request, { headers: new Headers() }, event => events.push(event));
+      expect(judgments).toBe(1);
+      if (rejected) {
+        expect(events.some(event => event.type === "text_delta")).toBeFalse();
+        expect(events.at(-1)).toMatchObject({ type: "error", code: "jev_decision_required", retryable: false });
+      } else {
+        expect(events.some(event => event.type === "text_delta" && event.text.includes("Review the pending task"))).toBeTrue();
+        expect(events.at(-1)?.type).not.toBe("error");
+      }
+    } finally {
+      worker.run = originalRun;
+      chatGptTurnSessions.clear();
+      restoreJudge();
+    }
+  });
+
+  test("a required Jev failure after submission retains its code and cannot be silently retried", async () => {
+    const restoreJudge = configureJudgeForTests({
+      enabled: true,
+      apiKey: () => "fixture-key",
+      evaluate: (async ({ questions }: { questions: Record<string, { type: string }> }) => {
+        expect(Object.values(questions).every(question => question.type === "score")).toBeTrue();
+        return {
+          answers: Object.fromEntries(Object.keys(questions).map(key => [key, { type: "score", score: 2 }])),
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      }) as never,
+    });
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web",
+      baseUrl: `browser://required-jev-${Date.now()}`,
+      chatgptWeb: { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run.bind(worker);
+    let browserStarts = 0;
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+      browserStarts += 1;
+      turn.onSubmitted?.();
+      throw new JevDecisionError("answer_review", "the required judgment is unavailable");
+    };
+    try {
+      const request = rawWireRequest(environmentXml);
+      const adapter = createChatGptWebAdapter(provider);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const events: AdapterEvent[] = [];
+        await adapter.runTurn!(request, { headers: new Headers() }, event => events.push(event));
+        expect(events.at(-1)).toMatchObject({ type: "error", status: 503, code: "jev_decision_required", retryable: false });
+      }
+      expect(browserStarts).toBe(1);
+    } finally {
+      (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      chatGptTurnSessions.clear();
+      restoreJudge();
     }
   });
 
@@ -2607,7 +2703,8 @@ describe("ChatGPT outer-native harness v4", () => {
     const token = await broker.register(gatewayOnlyEnvironment, 60_000);
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+      args: ["--preload", "./tests/fixtures/jev.ts", "src/cli.ts", "mcp", "--broker-socket", socketPath],
+      env: { NODE_ENV: "test" },
       cwd: process.cwd(),
       stderr: "pipe",
     });
@@ -2991,7 +3088,8 @@ describe("ChatGPT outer-native harness v4", () => {
       prefix_rule: ["pwd"],
     };
     const transport = new StdioClientTransport({
-      command: process.execPath, args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+      command: process.execPath, args: ["--preload", "./tests/fixtures/jev.ts", "src/cli.ts", "mcp", "--broker-socket", socketPath],
+      env: { NODE_ENV: "test" },
       cwd: process.cwd(), stderr: "pipe",
     });
     const client = new Client({ name: "native-permissions-test", version: "1" });
@@ -3008,7 +3106,11 @@ describe("ChatGPT outer-native harness v4", () => {
         try {
           const pending = client.callTool({ name: "codex_exec", arguments: { turn_token: token, cmd: "pwd", ...permissions } });
           const [request] = await broker.nextToolBatch(token);
-          const expected = name === "exec_command" ? { cmd: "pwd", ...permissions } : { command: "pwd", ...permissions };
+          const expected = {
+            ...(name === "exec_command" ? { cmd: "pwd" } : { command: "pwd" }),
+            ...permissions,
+            justification: `${permissions.justification}\n[Jev] risk 0/3: read-only; justification matches command: yes.`,
+          };
           broker.completeTool(token, request!.callId, { content: [{ type: "text", text: "Native approval denied" }], isError: true });
           const response = await pending;
           expect(request).toMatchObject({ wireName: name, arguments: expected });
@@ -3050,7 +3152,8 @@ describe("ChatGPT outer-native harness v4", () => {
     const token = await broker.register(directEnvironment, 60_000);
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+      args: ["--preload", "./tests/fixtures/jev.ts", "src/cli.ts", "mcp", "--broker-socket", socketPath],
+      env: { NODE_ENV: "test" },
       cwd: process.cwd(),
       stderr: "pipe",
     });
@@ -3168,7 +3271,8 @@ describe("ChatGPT outer-native harness v4", () => {
     const secondToken = await broker.register(secondEnvironment, 60_000, "second-turn");
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+      args: ["--preload", "./tests/fixtures/jev.ts", "src/cli.ts", "mcp", "--broker-socket", socketPath],
+      env: { NODE_ENV: "test" },
       cwd: process.cwd(),
       stderr: "pipe",
     });
@@ -3226,7 +3330,8 @@ describe("ChatGPT outer-native harness v4", () => {
     const token = await broker.register(gatewayOnlyEnvironment);
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+      args: ["--preload", "./tests/fixtures/jev.ts", "src/cli.ts", "mcp", "--broker-socket", socketPath],
+      env: { NODE_ENV: "test" },
       cwd: process.cwd(),
       stderr: "pipe",
     });
@@ -3274,7 +3379,8 @@ describe("ChatGPT outer-native harness v4", () => {
     const replacementToken = await broker.register(environment);
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+      args: ["--preload", "./tests/fixtures/jev.ts", "src/cli.ts", "mcp", "--broker-socket", socketPath],
+      env: { NODE_ENV: "test" },
       cwd: process.cwd(),
       stderr: "pipe",
     });
@@ -3334,7 +3440,8 @@ describe("ChatGPT outer-native harness v4", () => {
     let replacementToken: string | undefined;
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+      args: ["--preload", "./tests/fixtures/jev.ts", "src/cli.ts", "mcp", "--broker-socket", socketPath],
+      env: { NODE_ENV: "test" },
       cwd: process.cwd(),
       stderr: "pipe",
     });

@@ -13,12 +13,13 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-test("daemon streams browser lifecycle through the real helper process", async () => {
+test.each([false, true])("daemon streams browser lifecycle through the real helper process (required Jev failure=%s)", async failJudgment => {
   const root = mkdtempSync(join(tmpdir(), "codex-launcher-helper-client-"));
   roots.push(root);
   const helper = join(root, "helper.ts");
   writeFileSync(helper, `
     import { ChatGptBrowserWorker } from ${JSON.stringify(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url).href)};
+    import { JevDecisionError } from ${JSON.stringify(new URL("../src/lib/judge.ts", import.meta.url).href)};
     // Substitute only the browser. Both sides of the production IPC protocol run unchanged.
     ChatGptBrowserWorker.prototype.run = async turn => {
       await turn.onPreparedSelected(false);
@@ -29,6 +30,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
       await turn.onMultipartStageAcknowledged?.(2);
       await turn.onSendActivated();
       turn.onSubmitted();
+      if (${JSON.stringify(failJudgment)}) throw new JevDecisionError("helper_review", "required judgment is unavailable");
       turn.onReasoningSummary("Reading project");
       turn.onReasoningSummary(" files", true);
       turn.onTextDelta("done");
@@ -87,7 +89,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
   let released = false;
   const client = new LauncherBrowserHelperClient(config);
   try {
-    const result = await client.run({
+    const result = client.run({
       traceId: "abcdef123456",
       modelId: "gpt-5.6-sol",
       reasoning: "high",
@@ -108,7 +110,14 @@ test("daemon streams browser lifecycle through the real helper process", async (
       captureLunaCheckpoint: true,
       onLunaCheckpoint: checkpoint => checkpoints.push(checkpoint),
     });
-    expect(result).toBe("done");
+    if (failJudgment) {
+      await expect(result).rejects.toMatchObject({ status: 503, errorType: "server_error", code: "jev_decision_required", retryable: false });
+      expect(submitted).toBe(true);
+      expect(deltas).toEqual([]);
+      expect(released).toBe(true);
+      return;
+    }
+    expect(await result).toBe("done");
     expect(reasoning).toEqual([
       { text: "Reading project", continuation: false },
       { text: " files", continuation: true },

@@ -270,7 +270,8 @@ describe("Zero Risk public MCP ABI", () => {
     ]), nonceA, 60_000, "safe-stdio");
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: ["src/cli.ts", "mcp", "--contract", "safe", "--broker-socket", socketPath],
+      args: ["--preload", "./tests/fixtures/jev.ts", "src/cli.ts", "mcp", "--contract", "safe", "--broker-socket", socketPath],
+      env: { NODE_ENV: "test" },
       cwd: process.cwd(),
       stderr: "pipe",
     });

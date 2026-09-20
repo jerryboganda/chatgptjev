@@ -1,4 +1,4 @@
-import { confidentBoolean, confidentChoice, judge } from "./judge";
+import { confidentBoolean, confidentChoice, judge, JevDecisionError } from "./judge";
 
 export interface CodexErrorPayload {
   message: string;
@@ -304,8 +304,8 @@ export interface JudgedAdapterFailure {
  * from the ChatGPT UI, Playwright, or the network, where keyword rules misfile ~half of real cases.
  */
 export async function judgeAdapterFailure(message: string): Promise<JudgedAdapterFailure> {
-  const fallback = adapterFailureFromMessage(message);
-  if (!message.trim() || fallback.httpStatus === 499) return { ...fallback, source: "keywords" };
+  if (isClientClosedMessage(message)) return { ...adapterFailureFromMessage(message), source: "keywords" };
+  if (!message.trim()) throw new JevDecisionError("adapter_failure", "there is no error text to classify");
   const answers = await judge("adapter_failure", {
     error_message: message,
     source: "Error text surfaced by the ChatGPT web UI, the browser automation, or an upstream proxy while a Codex coding-agent turn was running.",
@@ -327,13 +327,14 @@ export async function judgeAdapterFailure(message: string): Promise<JudgedAdapte
   const retryable = confidentBoolean(answers?.retryable);
   const userActionRequired = confidentBoolean(answers?.user_action_required);
   const category = confidentChoice(answers?.category);
-  if (!category || category === "none") {
-    return { ...fallback, retryable, userActionRequired, source: "keywords" };
-  }
+  if (category === "none") throw new JevDecisionError("adapter_failure", "no error category matches; inspect the original failure");
   const mapped = CATEGORY_PAYLOAD[category];
+  const retryAfterSeconds = parseRetryAfterFromMessage(message);
+  const finalMessage = retryAfterSeconds && !/please try again in /i.test(message)
+    ? `${message} Please try again in ${retryAfterSeconds}s.` : message;
   return {
     httpStatus: mapped.httpStatus,
-    error: { message: fallback.error.message, type: mapped.type, code: mapped.code },
+    error: { message: finalMessage, type: mapped.type, code: mapped.code },
     // A user-blocking condition is never retryable, whatever the retry verdict says.
     retryable: userActionRequired === true ? false : retryable,
     userActionRequired,
@@ -348,6 +349,7 @@ export function httpStatusFromTerminalError(error: {
   message?: string;
 } | undefined): number {
   if (!error) return 502;
+  if (error.code === "jev_decision_required") return 503;
   if (error.code === "client_closed_request" || error.code === "client_cancelled") return 499;
   if (error.type === "rate_limit_error" || error.code === "rate_limit_exceeded") return 429;
   if (error.type === "authentication_error" || error.code === "invalid_api_key") return 401;

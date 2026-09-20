@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -16,6 +16,11 @@ import { LAUNCHER_BROWSER_HOST_KIND, LAUNCHER_BROWSER_IDLE_URL } from "../src/la
 import { CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL } from "../src/chatgpt-web-models";
 import { defaultBrokerEndpoint } from "../src/config";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig } from "../src/types";
+import { installJevFixture } from "./fixtures/jev";
+
+let restoreIntegrationJudge: () => void;
+beforeEach(() => { restoreIntegrationJudge = installJevFixture(); });
+afterEach(() => restoreIntegrationJudge());
 
 const testTempRoot = process.platform === "win32" ? tmpdir() : "/tmp";
 const root = mkdtempSync(join(testTempRoot, "cgw-zero-risk-adapter-"));

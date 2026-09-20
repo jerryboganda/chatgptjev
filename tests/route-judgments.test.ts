@@ -52,6 +52,18 @@ function confidentOwner(owner: keyof typeof ROUTE_OWNERS) {
 }
 
 describe("route judgments", () => {
+  test("route inference strips URL credentials, query strings and fragments without rewriting configuration", async () => {
+    const { calls } = useFakeJudge(() => confidentOwner("manual_provider"));
+    const privateUrl = "https://fixture-user:fixture-password@example.test/v1?api_key=fixture-query#fixture-fragment";
+    const configText = `openai_base_url = "${privateUrl}"\n[model_providers.cloud]\nbase_url = "${privateUrl}"`;
+    await judgeCodexRouteOwner({ expectedRouteUrl: privateUrl, configText });
+    const sent = JSON.stringify(calls[0]!.state);
+    expect(sent).toContain("https://example.test/v1");
+    expect(sent).not.toMatch(/fixture-user|fixture-password|fixture-query|fixture-fragment/);
+    expect(configText).toContain(privateUrl);
+    expect(currentRouteEvidence('openai_base_url = "not-a-url-with-private-data"').openai_base_url).toBe("unreadable");
+  });
+
   test("currentRouteEvidence reads the live route, provider, and provider tables without secrets", () => {
     const evidence = currentRouteEvidence([
       OTHER_WRAPPER_CONFIG,
@@ -99,20 +111,20 @@ describe("route judgments", () => {
     expect(calls).toHaveLength(1);
   });
 
-  test("unsure verdicts, judge failures, and unreadable configs leave the inspection unexplained", async () => {
+  test("unsure verdicts, failed judgments, and unreadable configs report an explicit failure", async () => {
     const unsure = useFakeJudge(() => ({
       answers: { owner: { type: "choice", choice: "other_wrapper", probabilities: { other_wrapper: 0.4, manual_provider: 0.35, stale_self: 0.2, restored_default: 0.05 } } },
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     }));
-    expect(await judgeCodexRouteOwner({ expectedRouteUrl: "http://127.0.0.1:8977/v1", configText: OTHER_WRAPPER_CONFIG })).toBeUndefined();
+    await expect(judgeCodexRouteOwner({ expectedRouteUrl: "http://127.0.0.1:8977/v1", configText: OTHER_WRAPPER_CONFIG })).rejects.toThrow(/Jev.*uncertain/);
     expect(unsure.calls).toHaveLength(1);
     restores.pop()!();
 
     useFakeJudge(() => { throw new Error("gateway down"); });
-    expect(await judgeCodexRouteOwner({ expectedRouteUrl: undefined, configText: OTHER_WRAPPER_CONFIG })).toBeUndefined();
-    expect(await explainCodexRouteConflict({
+    await expect(judgeCodexRouteOwner({ expectedRouteUrl: undefined, configText: OTHER_WRAPPER_CONFIG })).rejects.toThrow(/Jev.*failed/);
+    await expect(explainCodexRouteConflict({
       errors: [ROUTE_CONFLICT_ERROR_PREFIX],
       configPath: join(tmpdir(), "jev-route-missing", "config.toml"),
-    })).toBeUndefined();
+    })).rejects.toThrow(/Jev.*config/);
   });
 });

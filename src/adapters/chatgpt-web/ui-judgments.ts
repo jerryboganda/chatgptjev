@@ -1,12 +1,12 @@
 import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
 import { ChatGptWebAdapterError, chatGptStoppedThinkingError } from "./adapter-error";
 import { CHATGPT_ACCOUNT_LIMIT_ADVICE, noteChatGptAccountLimited } from "./concurrency";
-import { confidentBoolean, confidentChoice, judge, judgeConfigured, judgeEnabled } from "../../lib/judge";
+import { confidentBoolean, confidentChoice, judge, JevDecisionError } from "../../lib/judge";
 
 /**
  * Jev-backed UI judgments for ChatGPT alerts, dialogs, and terminal status labels that the exact
- * locale regexes in browser-worker.ts do not know yet. Everything here is fail-open: no verdict,
- * no change in behaviour. Exact matches in code always run first and stay authoritative.
+ * locale regexes in browser-worker.ts do not know yet. Missing, failed or uncertain semantic
+ * judgments stop explicitly. Exact protocol matches remain authoritative.
  */
 
 const DIALOG_KINDS = {
@@ -36,8 +36,6 @@ const DIALOG_FAILURES: Partial<Record<DialogKind, { status: number; errorType: s
   generic_error: { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true, hint: "Retry the turn." },
 };
 
-/** Dialogs the worker drives itself; never let a judgment interrupt them. */
-const CODE_OWNED_DIALOG = /Allow ChatGPT to use|Not in history/i;
 const MAX_DIALOG_TEXT = 1_500;
 const DIALOG_JUDGE_TIMEOUT_MS = 1_500;
 
@@ -47,17 +45,16 @@ export interface ChatGptDialogTextSource {
   };
 }
 
-/** Visible alert/dialog text, or `[]` when unavailable (closed page, fake page, no judge). */
+/** Read visible alerts and dialogs; a failed read is not evidence that no dialog exists. */
 export async function visibleChatGptDialogTexts(
   page: ChatGptDialogTextSource,
   selector = '[role="alert"], [role="dialog"]',
 ): Promise<string[]> {
-  if (!judgeEnabled() || !judgeConfigured()) return [];
   try {
     const texts = await page.locator(selector).filter({ visible: true }).allInnerTexts();
-    return texts.map(text => text.replace(/\s+/g, " ").trim()).filter(text => text && !CODE_OWNED_DIALOG.test(text));
+    return texts.map(text => text.replace(/\s+/g, " ").trim()).filter(Boolean);
   } catch {
-    return [];
+    throw new JevDecisionError("chatgpt_dialog", "the page could not be read; retry the operation");
   }
 }
 
@@ -88,25 +85,32 @@ const knownStoppedLabels = new Set<string>(CHATGPT_STOPPED_THINKING_LABELS);
 /** Labels Jev confirmed at runtime; fed back into the browser-side exact match on the next scan. */
 export const learnedStoppedThinkingLabels = new Set<string>();
 const judgedStatusLabels = new Set<string>();
-const MAX_STATUS_LABEL_LENGTH = 48;
+const STATUS_LABEL_BATCH_SIZE = 32;
 const MAX_JUDGED_LABELS = 512;
 
 const normalizeLabel = (value: string): string => value.replace(/\s+/g, " ").trim();
 
 /**
- * Fire-and-forget: ask Jev whether unknown short status labels mean "the model stopped thinking".
- * Runs off the observation loop's critical path; a confirmed label is picked up by the next DOM scan.
+ * Await every unknown status judgment before continuing observation. Successful judgments are
+ * remembered for identical labels; failures are never cached as permission to continue.
  */
-export function learnStoppedThinkingLabels(statusTexts: readonly string[]): void {
-  if (!judgeEnabled() || !judgeConfigured()) return;
-  for (const raw of statusTexts) {
-    const label = normalizeLabel(raw);
-    if (!label || label.length > MAX_STATUS_LABEL_LENGTH || knownStoppedLabels.has(label)
-      || learnedStoppedThinkingLabels.has(label) || judgedStatusLabels.has(label)) continue;
-    if (judgedStatusLabels.size >= MAX_JUDGED_LABELS) judgedStatusLabels.clear();
-    judgedStatusLabels.add(label);
-    void judgeStoppedThinkingLabel(label).then(stopped => {
-      if (stopped) learnedStoppedThinkingLabels.add(label);
+export async function learnStoppedThinkingLabels(statusTexts: readonly string[]): Promise<void> {
+  const labels = [...new Set(statusTexts.map(normalizeLabel))].filter(label => label
+    && !knownStoppedLabels.has(label) && !learnedStoppedThinkingLabels.has(label) && !judgedStatusLabels.has(label));
+  for (let offset = 0; offset < labels.length; offset += STATUS_LABEL_BATCH_SIZE) {
+    const batch = labels.slice(offset, offset + STATUS_LABEL_BATCH_SIZE);
+    const answers = await judge("stopped_thinking_labels", {
+      labels: batch,
+      source: "Status labels rendered by the ChatGPT web UI inside an assistant turn, in the account's language.",
+    }, Object.fromEntries(batch.map((_label, index) => [`label_${index}`, {
+      type: "boolean" as const,
+      instructions: `Does labels[${index}] state that thinking or reasoning stopped or was interrupted, rather than ongoing work or an answer being completed?`,
+    }])));
+    const verdicts = batch.map((_label, index) => confidentBoolean(answers[`label_${index}`]));
+    batch.forEach((label, index) => {
+      if (judgedStatusLabels.size >= MAX_JUDGED_LABELS) judgedStatusLabels.clear();
+      judgedStatusLabels.add(label);
+      if (verdicts[index]) learnedStoppedThinkingLabels.add(label);
     });
   }
 }
@@ -159,7 +163,6 @@ const MAX_STALL_TEXTS = 12;
 const STALL_JUDGE_TIMEOUT_MS = 2_500;
 
 export async function judgeStalledTurn(evidence: StalledTurnEvidence): Promise<StallKind | undefined> {
-  if (!judgeEnabled() || !judgeConfigured()) return undefined;
   const answers = await judge("stalled_turn", {
     seconds_without_completion: Math.round(evidence.elapsedSec),
     stop_button_visible: evidence.running,
@@ -175,14 +178,13 @@ export async function judgeStalledTurn(evidence: StalledTurnEvidence): Promise<S
 }
 
 /**
- * A structured failure when Jev is confident the stalled turn is over, else `undefined` so the
- * observation loop keeps waiting. A still-running stop button vetoes every terminal verdict except
- * an explicit login loss, because ChatGPT keeps the stop button while it is genuinely working.
+ * Continue only when Jev says the turn is still generating. Unknown state is reported explicitly;
+ * a stale stop button does not override a completed semantic judgment.
  */
 export async function stalledTurnFailure(evidence: StalledTurnEvidence): Promise<ChatGptWebAdapterError | undefined> {
   const kind = await judgeStalledTurn(evidence);
-  if (!kind || kind === "still_generating" || kind === "unknown") return undefined;
-  if (evidence.running && kind !== "login_lost") return undefined;
+  if (kind === "still_generating") return undefined;
+  if (!kind || kind === "unknown") throw new JevDecisionError("stalled_turn", "the turn state is uncertain; inspect the ChatGPT page");
   const excerpt = [...evidence.overlayTexts, ...evidence.statusTexts].map(normalizeLabel).filter(Boolean).join(" | ").slice(0, 200);
   const shown = excerpt ? ` ChatGPT showed: "${excerpt}".` : "";
   switch (kind) {
@@ -211,31 +213,31 @@ export const ANSWER_ROOT_KINDS = {
 export type AnswerRootKind = keyof typeof ANSWER_ROOT_KINDS;
 
 export const MAX_PROMOTION_CANDIDATES = 4;
-const MAX_PROMOTION_TEXT = 2_000;
 const PROMOTION_JUDGE_TIMEOUT_MS = 3_000;
 
 /**
  * Returns the normalized text of the last commentary root Jev confidently reads as the final
- * answer, or undefined. Only the newest `MAX_PROMOTION_CANDIDATES` roots are judged.
+ * answer, or undefined. Every nonempty root is judged in bounded batches.
  */
 export async function judgeAnswerRootPromotion(commentaryTexts: readonly string[]): Promise<string | undefined> {
-  if (!judgeEnabled() || !judgeConfigured()) return undefined;
-  const candidates = commentaryTexts.map(normalizeLabel).filter(Boolean).slice(-MAX_PROMOTION_CANDIDATES);
-  if (candidates.length === 0) return undefined;
-  const questions = Object.fromEntries(candidates.map((_, index) => [
-    `root_${index}`,
-    { type: "choice", instructions: `What is Markdown block ${index} (0-based, in page order)?`, criteria: ANSWER_ROOT_KINDS },
-  ] as const)) as Record<string, { type: "choice"; instructions: string; criteria: typeof ANSWER_ROOT_KINDS }>;
-  const answers = await judge("answer_root_promotion", {
-    turn_finished: true,
-    blocks: candidates.map((text, index) => ({ index, text: text.length > MAX_PROMOTION_TEXT ? `${text.slice(0, MAX_PROMOTION_TEXT)}…` : text })),
-    source: "ChatGPT finished generating (stop button gone) but the page shows only Markdown blocks the DOM rule classified as intermediate commentary; no block is positioned as the final answer. Decide what each block really is.",
-  }, questions, { timeoutMs: PROMOTION_JUDGE_TIMEOUT_MS });
-  if (!answers) return undefined;
-  for (let index = candidates.length - 1; index >= 0; index -= 1) {
-    if (confidentChoice(answers[`root_${index}`]) === "final_answer") return candidates[index];
+  const candidates = commentaryTexts.map(normalizeLabel).filter(Boolean);
+  let promoted: string | undefined;
+  for (let offset = 0; offset < candidates.length; offset += MAX_PROMOTION_CANDIDATES) {
+    const blocks = candidates.slice(offset, offset + MAX_PROMOTION_CANDIDATES).map((text, index) => ({ index: offset + index, text }));
+    const questions = Object.fromEntries(blocks.map(({ index }) => [
+      `root_${index}`,
+      { type: "choice", instructions: `What is Markdown block ${index} (0-based, in page order)?`, criteria: ANSWER_ROOT_KINDS },
+    ] as const)) as Record<string, { type: "choice"; instructions: string; criteria: typeof ANSWER_ROOT_KINDS }>;
+    const answers = await judge("answer_root_promotion", {
+      turn_finished: true,
+      blocks,
+      source: "ChatGPT finished generating (stop button gone) but the page shows only Markdown blocks the DOM rule classified as intermediate commentary; no block is positioned as the final answer. Decide what each block really is.",
+    }, questions, { timeoutMs: PROMOTION_JUDGE_TIMEOUT_MS });
+    for (const block of blocks) {
+      if (confidentChoice(answers[`root_${block.index}`]) === "final_answer") promoted = block.text;
+    }
   }
-  return undefined;
+  return promoted;
 }
 
 // Item 12: when the composer is missing, say what the page is actually showing instead of the
@@ -270,19 +272,19 @@ export interface ChatGptLoginPageSource {
   evaluate<T>(pageFunction: () => T): Promise<T>;
 }
 
-/** Guidance for a page without a composer, or undefined when Jev is off, unsure, or the page is unreadable. */
+/** Required guidance for a page without a composer; unreadable or uncertain state stops explicitly. */
 export async function describeChatGptLoginState(page: ChatGptLoginPageSource): Promise<string | undefined> {
-  if (!judgeEnabled() || !judgeConfigured()) return undefined;
   const text = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
   const url = (() => { try { return page.url(); } catch { return ""; } })();
-  if (!text.trim() && !url) return undefined;
+  if (!text.trim() && !url) throw new JevDecisionError("chatgpt_login_state", "the page could not be read");
   const answers = await judge("chatgpt_login_state", {
     url: url.replace(/\?.*$/, ""),
     page_text: normalizeLabel(text).slice(0, MAX_LOGIN_PAGE_TEXT),
     source: "Visible text of a chatgpt.com page opened by an automation that expected the signed-in chat composer but did not find it.",
   }, {
     state: { type: "choice", instructions: "What is this page showing?", criteria: LOGIN_STATES },
-  }, { timeoutMs: LOGIN_JUDGE_TIMEOUT_MS }).catch(() => undefined);
+  }, { timeoutMs: LOGIN_JUDGE_TIMEOUT_MS });
   const state = confidentChoice(answers?.state);
-  return state ? LOGIN_GUIDANCE[state] : undefined;
+  if (state === "unknown") throw new JevDecisionError("chatgpt_login_state", "the page state is uncertain; inspect the login window");
+  return LOGIN_GUIDANCE[state];
 }

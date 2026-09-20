@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mock } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -42,11 +42,17 @@ import {
   type BrokerToolResult,
 } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
+import { configureJudgeForTests } from "../src/lib/judge";
 import {
   CODEX_ACTIVE_COMPACTION_REQUEST_MARKER,
   structuredCompactionHandoffInstruction,
 } from "../src/adapters/chatgpt-web/native-compaction-control";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig } from "../src/types";
+import { installJevFixture } from "./fixtures/jev";
+
+let restoreIntegrationJudge: () => void;
+beforeEach(() => { restoreIntegrationJudge = installJevFixture(); });
+afterEach(() => restoreIntegrationJudge());
 
 /**
  * These fixtures hand the turn broker a Unix socket under their temp root. macOS puts TMPDIR at
@@ -1206,7 +1212,23 @@ test("a compact HTTP observer can reconnect without sending a second retained-ch
   }
 });
 
-test.each([false, true])("structured compact rebuilds canonical context when its retained source is absent (Bigger Context=%s)", async experimentalBiggerContext => {
+test.each([[false, false], [true, false], [false, true]])("fresh compaction requires Jev acceptance (Bigger Context=%s, rejected=%s)", async (experimentalBiggerContext, rejected) => {
+  let judgments = 0;
+  const restoreJudge = configureJudgeForTests({
+    enabled: true,
+    apiKey: () => "fixture-key",
+    evaluate: (async () => {
+      judgments += 1;
+      return {
+        answers: {
+          completeness: { type: "score", score: 2 },
+          preserves_latest_user_request: { type: "boolean", probability: rejected ? 0.01 : 0.99 },
+          introduces_contradiction: { type: "boolean", probability: 0.01 },
+        },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+    }) as never,
+  });
   const root = mkdtempSync(join(shortSocketTempRoot(), "cgw-missing-retained-compact-"));
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
@@ -1246,11 +1268,20 @@ test.each([false, true])("structured compact rebuilds canonical context when its
   const events: AdapterEvent[] = [];
   if (experimentalBiggerContext) compact.context.messages.at(-1)!.content += "x".repeat(160_000);
   try {
-    await createChatGptWebAdapter(provider).runTurn!(
+    const result = createChatGptWebAdapter(provider).runTurn!(
       compact,
       { headers: new Headers() },
       event => events.push(event),
     );
+    if (rejected) {
+      await result;
+      expect(events.at(-1)).toMatchObject({ type: "error", status: 503, code: "jev_decision_required", retryable: false });
+      expect(judgments).toBe(1);
+      expect(events.some(event => event.type === "text_delta")).toBeFalse();
+      return;
+    }
+    await result;
+    expect(judgments).toBe(1);
     expect(browserStarts).toBe(1);
     expect(events.some(event => event.type === "text_delta"
       && event.text.includes("Fallback checkpoint from canonical Codex context"))).toBeTrue();
@@ -1259,6 +1290,7 @@ test.each([false, true])("structured compact rebuilds canonical context when its
     expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
   } finally {
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+    restoreJudge();
     await TurnBroker.forSocket(provider.chatgptWeb!.brokerSocketPath!).close();
     rmSync(root, { recursive: true, force: true });
   }

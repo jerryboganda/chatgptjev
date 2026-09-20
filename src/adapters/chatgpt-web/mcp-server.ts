@@ -8,7 +8,7 @@ import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
 import { callTurnBroker, TurnBrokerTimeoutError, type BrokerToolResult } from "./turn-broker";
 import { observeMcpToolCalls } from "./mcp-observation";
-import { judgeExecApproval, maskSecretsInToolResult } from "./tool-judgments";
+import { judgeNativeToolInvocation, maskSecretsInToolResult } from "./tool-judgments";
 
 interface ClaimedTurn {
   bindingId: string;
@@ -552,17 +552,24 @@ export async function runChatGptMcpServer(options: {
     signal?: AbortSignal,
   ) => {
     const timeoutMs = chatGptMcpInvocationTimeout(bound);
+    const expiresAt = Date.now() + timeoutMs;
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new TurnBrokerTimeoutError()), timeoutMs);
+    const operationSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
     try {
+      const reviewed = await judgeNativeToolInvocation(tool, payload, operationSignal);
+      operationSignal.throwIfAborted();
       const response = await callTurnBroker<BrokerToolResult>(options.brokerSocketPath, {
         method: "invoke",
         bindingId,
         wireName: wireName(tool),
         freeform: tool.freeform === true,
-        ...(tool.freeform ? { input: payload.input ?? "" } : { arguments: payload.arguments ?? {} }),
-      }, timeoutMs, signal);
+        ...(tool.freeform ? { input: reviewed.input ?? "" } : { arguments: reviewed.arguments ?? {} }),
+      }, Math.max(1, expiresAt - Date.now()), operationSignal);
       // Item 10: regex pass + Jev secret/PII gate before any tool output reaches ChatGPT's servers.
-      return await maskSecretsInToolResult(asMcpResult(response));
+      return await maskSecretsInToolResult(asMcpResult(response), operationSignal);
     } catch (error) {
+      const timedOut = error instanceof TurnBrokerTimeoutError || operationSignal.reason instanceof TurnBrokerTimeoutError;
       // A cancelled/timed-out MCP request no longer has a consumer for the native result. Revoke
       // the whole turn capability so the broker drops the pending invocation and every later call
       // from that abandoned ChatGPT response fails explicitly against its retired binding.
@@ -577,7 +584,7 @@ export async function runChatGptMcpServer(options: {
           "Codex Native invocation failed and its abandoned broker binding could not be retired",
         );
       }
-      if (error instanceof TurnBrokerTimeoutError) {
+      if (timedOut) {
         const toolName = wireName(tool);
         console.error(
           `[chatgpt-web-mcp] ${toolName} did not complete within ${timeoutMs}ms; retired its turn binding`,
@@ -591,6 +598,8 @@ export async function runChatGptMcpServer(options: {
         }, true);
       }
       throw error;
+    } finally {
+      clearTimeout(timer);
     }
   };
 
@@ -640,20 +649,11 @@ export async function runChatGptMcpServer(options: {
         const { cmd, workdir, yield_time_ms, max_output_tokens, tty, sandbox_permissions, justification, prefix_rule } = input;
         const bound = claimed.environment;
         const tool = exactTool(bound, "exec_command") ?? exactTool(bound, "shell_command");
-        // Jev annotates escalations (risk + justification check) and forces an approval prompt for
-        // injected-looking commands. Codex still decides; keys the native tool cannot express are dropped.
-        const verdict = await judgeExecApproval({ cmd, workdir, sandbox_permissions, justification });
         const properties = tool?.parameters.properties;
-        const expressible = (key: string) => !tool || (!!properties && typeof properties === "object" && Object.hasOwn(properties, key));
-        const judged = Object.fromEntries(Object.entries(verdict.permissions).filter(([key]) => expressible(key)));
-        if (Object.keys(judged).length < Object.keys(verdict.permissions).length) {
-          console.warn(`[chatgpt-web-mcp] jev exec verdict dropped: native ${tool?.name} cannot express an approval request`);
-        }
         const permissions = {
           ...(sandbox_permissions !== undefined ? { sandbox_permissions } : {}),
           ...(justification !== undefined ? { justification } : {}),
           ...(prefix_rule !== undefined ? { prefix_rule } : {}),
-          ...judged,
         };
         const execCommandArguments = {
           cmd,

@@ -69,7 +69,7 @@ test("a far easier or far harder request yields one throttled suggestion that na
   expect(harder).toContain("would likely do better");
 });
 
-test("adjacent tiers, empty requests, unsure scores, judge errors, and a disabled judge stay silent", async () => {
+test("matching or adjacent recommendations stay quiet but failed or disabled judgments stop explicitly", async () => {
   expect(EFFORT_SUGGESTION_MIN_GAP).toBe(2);
   restore = withJev(2.4).restore;
   expect(await suggestEffortTier([user("Add a null check to parse()")], "high")).toBeUndefined();
@@ -78,11 +78,11 @@ test("adjacent tiers, empty requests, unsure scores, judge errors, and a disable
 
   restore();
   restore = withJev(() => { throw new Error("gateway down"); }).restore;
-  expect(await suggestEffortTier([user("Anything")], "max")).toBeUndefined();
+  await expect(suggestEffortTier([user("Anything")], "max")).rejects.toThrow(/Jev.*failed/);
 
   restore();
   const off = withJev(0, false);
   restore = off.restore;
-  expect(await suggestEffortTier([user("What is 2+2?")], "max")).toBeUndefined();
+  await expect(suggestEffortTier([user("What is 2+2?")], "max")).rejects.toThrow(/Jev.*disabled/);
   expect(off.seen).toHaveLength(0);
 });

@@ -167,7 +167,7 @@ export interface LauncherApi {
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
-  /** Read (no argument) or change Jev judgments; changing restarts the runtime. */
+  /** Read required-Jev status; false rejects and true is a compatibility no-op. */
   jev(enabled?: boolean): Promise<JevStatus>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{

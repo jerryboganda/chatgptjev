@@ -55,7 +55,7 @@ export interface SetupOptions {
   experimentalBiggerContext?: boolean;
   experimentalSkillAttachments?: boolean;
   zeroRiskProEnabled?: boolean;
-  /** `true`/`false` writes `jevEnabled`; omitted leaves the stored value alone. */
+  /** Legacy compatibility option; disabling required Jev judgments is rejected. */
   jevEnabled?: boolean;
   replaceCodexRoute?: boolean;
   restartService?: boolean;
@@ -286,7 +286,8 @@ function baseConfig(
     }
     config.zeroRiskProEnabled = options.zeroRiskProEnabled;
   }
-  if (options.jevEnabled !== undefined) config.jevEnabled = options.jevEnabled;
+  if (options.jevEnabled === false) throw new Error("Jev is required and cannot be disabled");
+  config.jevEnabled = true;
   if (config.browserInteractionMode === "manual") {
     if (options.refreshAccountCapabilities) {
       throw new Error("Zero Risk cannot refresh account capabilities");

@@ -1,7 +1,7 @@
 import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import type { CodexJsonSchemaOutputFormat } from "../../types";
-import { confidentChoice, judge, judgeConfigured, judgeEnabled } from "../../lib/judge";
+import { confidentChoice, judge, JevDecisionError } from "../../lib/judge";
 import { ChatGptWebAdapterError } from "./adapter-error";
 
 /** Returns the answer to emit: the original when it validates, or a repaired equivalent. */
@@ -32,9 +32,6 @@ export type StructuredOutputFailureKind = keyof typeof FAILURE_KINDS;
 
 /** Formatting and truncation are transient model slips worth one retry; wrong content is not. */
 const RETRYABLE_KINDS: ReadonlySet<StructuredOutputFailureKind> = new Set(["fenced_json", "trailing_prose", "truncated"]);
-
-const MAX_JUDGED_ANSWER_CHARS = 6000;
-const MAX_CANDIDATES = 6;
 
 function fencedBlocks(answer: string): string[] {
   return [...answer.matchAll(/```[a-zA-Z0-9_-]*[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/g)].map(match => match[1]!.trim());
@@ -73,7 +70,6 @@ export function structuredOutputCandidates(answer: string): string[] {
     if (!candidate || seen.has(candidate)) continue;
     seen.add(candidate);
     candidates.push(candidate);
-    if (candidates.length >= MAX_CANDIDATES) break;
   }
   return candidates;
 }
@@ -87,34 +83,34 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
 }
 
 async function pickIntendedCandidate(schemaName: string, answer: string, valid: string[]): Promise<string> {
-  if (valid.length === 1 || !judgeEnabled() || !judgeConfigured()) return valid[valid.length - 1]!;
-  const criteria = Object.fromEntries(valid.map((candidate, index) => [
-    `candidate_${index}`,
-    candidate.length > 600 ? `${candidate.slice(0, 600)}…` : candidate,
-  ]));
+  const criteria = {
+    ...Object.fromEntries(valid.map((candidate, index) => [`candidate_${index}`, candidate])),
+    none: "None of these candidates is an unambiguous intended final answer; they are examples, quoted input, or incomplete alternatives.",
+  };
   const answers = await judge("structured_output_candidate", {
     schema_name: schemaName,
-    full_answer: answer.slice(0, MAX_JUDGED_ANSWER_CHARS),
-    source: "A coding agent asked ChatGPT for one JSON document matching a strict schema. Several JSON spans in the answer validate; which one is the answer the model meant to return (not an example, a before/after, or quoted input)?",
+    full_answer: answer,
+    source: "A coding agent asked ChatGPT for one JSON document matching a strict schema. The listed JSON spans validate; identify the intended final answer, not an example, a before/after comparison, or quoted input.",
   }, {
     intended: { type: "choice", instructions: "Which candidate is the intended final JSON answer?", criteria },
   });
-  const pick = confidentChoice(answers?.intended);
-  const index = pick ? Number(pick.slice("candidate_".length)) : NaN;
-  return Number.isInteger(index) && valid[index] !== undefined ? valid[index]! : valid[valid.length - 1]!;
+  const pick = confidentChoice(answers.intended);
+  const index = /^candidate_\d+$/.test(pick) ? Number(pick.slice("candidate_".length)) : NaN;
+  if (!Number.isInteger(index) || valid[index] === undefined) {
+    throw new JevDecisionError("structured_output_candidate", "no intended candidate was identified; request a single JSON answer");
+  }
+  return valid[index]!;
 }
 
 export async function judgeStructuredOutputFailure(
   schemaName: string,
   answer: string,
   detail: string | undefined,
-): Promise<StructuredOutputFailureKind | undefined> {
-  if (!judgeEnabled() || !judgeConfigured()) return undefined;
+): Promise<StructuredOutputFailureKind> {
   const answers = await judge("structured_output_failure", {
     schema_name: schemaName,
     validator_detail: detail ?? null,
-    answer_head: answer.slice(0, MAX_JUDGED_ANSWER_CHARS / 2),
-    answer_tail: answer.length > MAX_JUDGED_ANSWER_CHARS / 2 ? answer.slice(-MAX_JUDGED_ANSWER_CHARS / 2) : "",
+    answer,
     source: "ChatGPT's answer to a coding agent that required strict-schema JSON failed validation even after stripping code fences and extracting balanced JSON spans.",
   }, {
     failure_kind: { type: "choice", instructions: "Why did this answer fail?", criteria: FAILURE_KINDS },
@@ -168,9 +164,9 @@ export function createChatGptStructuredOutputValidator(
       return repaired;
     }
 
-    const kind = await judgeStructuredOutputFailure(format.name, answer, detail).catch(() => undefined);
-    const why = kind ? ` (${kind.replace(/_/g, " ")})` : "";
-    const retryable = kind !== undefined && RETRYABLE_KINDS.has(kind);
+    const kind = await judgeStructuredOutputFailure(format.name, answer, detail);
+    const why = ` (${kind.replace(/_/g, " ")})`;
+    const retryable = RETRYABLE_KINDS.has(kind);
     if (!parsed.ok) {
       throw validationError(`ChatGPT Web returned malformed JSON for strict Codex output schema ${schemaName}${why}`, retryable);
     }

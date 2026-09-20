@@ -247,67 +247,32 @@ test("Zero Risk Pro transaction installs or removes only its explicit model prof
   );
 });
 
-test("AI judgments toggle reports the stored Jev switch and rewrites it through a full setup pass", async () => {
+test("Jev is required and compatibility calls never change the Codex route or runtime setup", async () => {
   const config = { mode: "browser-only", browserHost: "launcher", browserInteractionMode: "automatic" };
   assert.deepEqual(
     { ...hostFor(config).host.jevStatus(), keyPresent: undefined },
     { configured: true, enabled: true, keyPresent: undefined },
     "an omitted jevEnabled means on",
   );
-  assert.equal(hostFor({ ...config, jevEnabled: false }).host.jevStatus().enabled, false);
+  assert.equal(hostFor({ ...config, jevEnabled: false }).host.jevStatus().enabled, true);
   assert.equal(hostFor(undefined).host.jevStatus().configured, false);
   assert.equal(typeof hostFor(config).host.jevStatus().keyPresent, "boolean");
 
   const disabled = hostFor(config);
-  const result = await disabled.host.setJev(false);
-  assert.equal(result.configured, true);
-  assert.deepEqual(disabled.invocation(), {
-    name: "jev",
-    args: [
-      "setup",
-      "--browser-only",
-      "--browser-host-descriptor",
-      "/runtime/launcher-browser.json",
-      "--automatic-browser-interaction",
-      "--acknowledge-unofficial",
-      "--replace-codex-route",
-      "--restart-service",
-      "--no-jev",
-    ],
-  });
+  await assert.rejects(disabled.host.setJev(false), /Jev is required/);
+  assert.equal(disabled.invocation()?.name, undefined);
 
   const zeroRisk = hostFor(
     { mode: "full", browserHost: "launcher", browserInteractionMode: "manual", autoApproveToolCalls: true },
     "manual",
   );
-  await zeroRisk.host.setJev(true);
-  assert.deepEqual(zeroRisk.invocation().args, [
-    "setup",
-    "--full",
-    "--browser-host-descriptor",
-    "/runtime/launcher-browser.json",
-    "--zero-risk-browser-interaction",
-    "--acknowledge-unofficial",
-    "--replace-codex-route",
-    "--restart-service",
-    "--jev",
-    "--auto-approve-tool-calls",
-  ], "Zero Risk keeps Jev available and preserves auto-approval");
+  assert.equal((await zeroRisk.host.setJev(true)).enabled, true);
+  assert.equal(zeroRisk.invocation()?.name, undefined);
 
   const dev = devHostFor(config);
-  await dev.host.setJev(true);
-  assert.deepEqual(dev.invocation().args, [
-    "dev",
-    "setup",
-    "--browser-only",
-    "--browser-host-descriptor",
-    "/dev/runtime/launcher-browser.json",
-    "--automatic-browser-interaction",
-    "--acknowledge-unofficial",
-    "--jev",
-  ], "the DEV profile never touches the production Codex route");
-
-  await assert.rejects(hostFor(undefined).host.setJev(true), /Initialize the runtime before changing AI judgments/);
+  assert.equal((await dev.host.setJev(true)).enabled, true);
+  assert.equal(dev.invocation()?.name, undefined);
+  assert.equal((await hostFor(undefined).host.setJev(true)).configured, false);
 });
 
 test("DEV setup child environment removes launcher-rebound production aliases", async () => {

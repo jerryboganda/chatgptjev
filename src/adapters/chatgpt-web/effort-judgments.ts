@@ -1,5 +1,5 @@
 import type { CodexMessage } from "../../types";
-import { judge, judgeConfigured, judgeEnabled, nearestScoreLevel } from "../../lib/judge";
+import { judge, nearestScoreLevel } from "../../lib/judge";
 
 /**
  * Item 13: effort-tier recommendation. The routed model fixes the effort ChatGPT runs with, so this
@@ -49,15 +49,14 @@ export function latestUserRequestText(messages: readonly CodexMessage[]): string
 }
 
 /**
- * Returns the suggestion line to log, or undefined when the routed tier is fine, Jev is unsure,
- * or the same suggestion was logged within the cooldown. Never throws.
+ * Returns the suggestion line to log, or undefined for a suitable tier or a duplicate notification.
+ * A failed Jev judgment stops the request.
  */
 export async function suggestEffortTier(
   messages: readonly CodexMessage[],
   routed: EffortTier,
   now = Date.now(),
 ): Promise<string | undefined> {
-  if (!judgeEnabled() || !judgeConfigured()) return undefined;
   const request = latestUserRequestText(messages);
   if (!request) return undefined;
   const answers = await judge("effort_tier", {
@@ -66,9 +65,8 @@ export async function suggestEffortTier(
     source: "The newest user request sent to a coding agent that runs on ChatGPT with a fixed reasoning-effort tier. Rate how much reasoning effort the request itself needs.",
   }, {
     difficulty: { type: "score", instructions: "How difficult is this request?", criteria: REQUEST_DIFFICULTY_LEVELS },
-  }, { timeoutMs: EFFORT_JUDGE_TIMEOUT_MS }).catch(() => undefined);
-  const level = nearestScoreLevel(answers?.difficulty, REQUEST_DIFFICULTY_LEVELS.length);
-  if (level === undefined) return undefined;
+  }, { timeoutMs: EFFORT_JUDGE_TIMEOUT_MS });
+  const level = nearestScoreLevel(answers.difficulty, REQUEST_DIFFICULTY_LEVELS.length);
   const recommended = EFFORT_TIERS[level]!;
   const gap = level - EFFORT_TIERS.indexOf(routed);
   if (Math.abs(gap) < EFFORT_SUGGESTION_MIN_GAP) return undefined;

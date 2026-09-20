@@ -1,5 +1,6 @@
 import type { AdapterEvent, CodexMessagePhase, CodexProviderContinuationState, CodexUsage } from "./types";
 import { adapterFailureFromMessage, classifyError, judgeAdapterFailure, type CodexErrorPayload } from "./lib/errors";
+import { JevDecisionError } from "./lib/judge";
 import { encodeCompactionSummary } from "./responses/compaction";
 import { encodeReasoningEnvelope, type ReasoningEnvelope } from "./responses/reasoning-envelope";
 import { resolveStallTimeoutSec } from "./stall-timeout";
@@ -52,8 +53,17 @@ interface AdapterFailure {
 
 async function adapterFailureFromEvent(event: Extract<AdapterEvent, { type: "error" }>): Promise<AdapterFailure> {
   if (event.status === undefined && event.errorType === undefined && event.code === undefined) {
-    const judged = await judgeAdapterFailure(event.message);
-    return { httpStatus: judged.httpStatus, error: judged.error, retryable: event.retryable ?? judged.retryable };
+    try {
+      const judged = await judgeAdapterFailure(event.message);
+      return { httpStatus: judged.httpStatus, error: judged.error, retryable: event.retryable ?? judged.retryable };
+    } catch (error) {
+      if (!(error instanceof JevDecisionError)) throw error;
+      return {
+        httpStatus: error.status,
+        error: { message: error.message, type: error.errorType, code: error.code },
+        retryable: error.retryable,
+      };
+    }
   }
   const fallback = adapterFailureFromMessage(event.message);
   const httpStatus = event.status ?? fallback.httpStatus;
@@ -690,11 +700,15 @@ export function bridgeToResponsesSSE(
       } catch (err) {
         if (!terminated) {
           flushHiddenRawReasoning();
+          const failure = err instanceof JevDecisionError
+            ? { message: err.message, type: err.errorType, code: err.code }
+            : responseError(500, "proxy_error", err instanceof Error ? err.message : String(err));
           emit("response.failed", {
             response: {
               ...responseSnapshot("failed", finishedItems),
-              error: responseError(500, "proxy_error", err instanceof Error ? err.message : String(err)),
-              last_error: responseError(500, "proxy_error", err instanceof Error ? err.message : String(err)),
+              error: failure,
+              last_error: failure,
+              ...(err instanceof JevDecisionError ? { retryable: err.retryable } : {}),
             },
           });
           reportTerminal("failed");

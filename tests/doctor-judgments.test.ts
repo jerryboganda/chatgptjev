@@ -1,4 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { defaultConfig, saveConfig } from "../src/config";
+import { installCodexIntegration } from "../src/codex-integration";
 import {
   DOCTOR_ROOT_CAUSES,
   DOCTOR_TRIAGE_CHECK_ID,
@@ -6,7 +11,7 @@ import {
   jevAvailabilityCheck,
   triageDoctorChecks,
 } from "../src/doctor-judgments";
-import { formatDoctorReport, type DoctorCheck } from "../src/doctor";
+import { formatDoctorReport, runDoctor, type DoctorCheck } from "../src/doctor";
 import { configureJudgeForTests } from "../src/lib/judge";
 
 let restore: (() => void) | undefined;
@@ -63,27 +68,27 @@ test("a confident root cause becomes one advisory check with the fix and the tro
   expect(Object.keys(jev.seen[0]!.questions.root_cause!.criteria!)).toEqual(Object.keys(DOCTOR_ROOT_CAUSES));
 });
 
-test("healthy reports, unsure verdicts, Jev failures, and disabled Jev add nothing", async () => {
+test("healthy reports need no triage; unsure, failed, or disabled Jev adds an explicit error", async () => {
   const healthy = routeConflictChecks.map(check => ({ ...check, status: check.status === "error" ? "ok" as const : check.status }));
   const unsure = withJev({ route_conflict: 0.5, daemon_down: 0.45, stale_install: 0.05 });
   restore = unsure.restore;
   expect(await triageDoctorChecks(healthy, "browser-only")).toBeUndefined();
   expect(unsure.seen).toHaveLength(0);
-  expect(await triageDoctorChecks(routeConflictChecks, "browser-only")).toBeUndefined();
+  expect(await triageDoctorChecks(routeConflictChecks, "browser-only")).toMatchObject({ id: DOCTOR_TRIAGE_CHECK_ID, status: "error", message: expect.stringMatching(/Jev.*uncertain/) });
   restore();
 
   const failing = withJev(() => { throw new Error("gateway down"); });
   restore = failing.restore;
-  expect(await triageDoctorChecks(routeConflictChecks, "browser-only")).toBeUndefined();
+  expect(await triageDoctorChecks(routeConflictChecks, "browser-only")).toMatchObject({ id: DOCTOR_TRIAGE_CHECK_ID, status: "error", message: expect.stringMatching(/Jev.*failed/) });
   restore();
 
   const disabled = withJev({ route_conflict: 1 }, false);
   restore = disabled.restore;
-  expect(await triageDoctorChecks(routeConflictChecks, "browser-only")).toBeUndefined();
+  expect(await triageDoctorChecks(routeConflictChecks, "browser-only")).toMatchObject({ id: DOCTOR_TRIAGE_CHECK_ID, status: "error", message: expect.stringMatching(/Jev.*disabled/) });
   expect(disabled.seen).toHaveLength(0);
 });
 
-test("the Jev availability line never fails doctor and reports configured, unconfigured, or disabled", () => {
+test("Jev is a readiness requirement, not an optional advisory", () => {
   const configured = withJev({ route_conflict: 1 });
   restore = configured.restore;
   expect(jevAvailabilityCheck()).toEqual({ id: JEV_CHECK_ID, status: "ok", message: "Jev judgments are configured" });
@@ -91,12 +96,38 @@ test("the Jev availability line never fails doctor and reports configured, uncon
 
   const unconfigured = withJev({ route_conflict: 1 }, true, "");
   restore = unconfigured.restore;
-  expect(jevAvailabilityCheck()).toMatchObject({ id: JEV_CHECK_ID, status: "warning", message: expect.stringContaining("AI_GATEWAY_API_KEY") });
+  expect(jevAvailabilityCheck()).toMatchObject({ id: JEV_CHECK_ID, status: "error", message: expect.stringContaining("AI_GATEWAY_API_KEY") });
   restore();
 
   const disabled = withJev({ route_conflict: 1 }, false);
   restore = disabled.restore;
-  expect(jevAvailabilityCheck()).toMatchObject({ id: JEV_CHECK_ID, status: "warning", message: expect.stringContaining("disabled") });
+  expect(jevAvailabilityCheck()).toMatchObject({ id: JEV_CHECK_ID, status: "error", message: expect.stringContaining("disabled") });
+});
+
+test("doctor retains a JSON report when route-owner inference fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "jev-doctor-report-"));
+  const previous = { app: process.env.CHATGPT_JEV_HOME, codex: process.env.CODEX_HOME };
+  process.env.CHATGPT_JEV_HOME = join(root, "app");
+  process.env.CODEX_HOME = join(root, "codex");
+  restore = withJev(() => { throw new Error("private-provider-failure"); }).restore;
+  try {
+    const config = { ...defaultConfig("browser-only"), port: 1, browserHost: "managed-chrome" as const };
+    saveConfig(config);
+    installCodexIntegration(config);
+    const path = join(process.env.CODEX_HOME, "config.toml");
+    writeFileSync(path, readFileSync(path, "utf8").replace("http://127.0.0.1:1", "https://other.example.test"));
+    const report = await runDoctor();
+    expect(report.ok).toBeFalse();
+    expect(report.checks).toContainEqual(expect.objectContaining({ id: "codex", status: "error" }));
+    expect(report.checks).toContainEqual(expect.objectContaining({ id: "jev-route-owner", status: "error" }));
+    expect(JSON.parse(JSON.stringify(report)).ok).toBeFalse();
+    expect(JSON.stringify(report)).not.toContain("private-provider-failure");
+  } finally {
+    for (const [key, value] of [["CHATGPT_JEV_HOME", previous.app], ["CODEX_HOME", previous.codex]] as const) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("the formatted report prints the triage under the deterministic checks and keeps readiness from them", () => {

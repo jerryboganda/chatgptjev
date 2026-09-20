@@ -41,19 +41,19 @@ test("a confident crash kind returns its fix and the state carries the clipped f
   expect(Object.keys(jev.seen[0]!.questions.crash_kind!.criteria!)).toEqual(Object.keys(CRASH_KINDS));
 });
 
-test("unsure, failing, or disabled Jev yields no verdict", async () => {
+test("unsure, failing, or disabled Jev reports why crash diagnosis could not complete", async () => {
   const unsure = withJev({ port_in_use: 0.5, config_invalid: 0.4, transient_crash: 0.1 });
   restore = unsure.restore;
-  expect(await classifyCrashLoop(input)).toBeUndefined();
+  await expect(classifyCrashLoop(input)).rejects.toThrow(/Jev.*uncertain/);
   restore();
 
   const failing = withJev(() => { throw new Error("gateway down"); });
   restore = failing.restore;
-  expect(await classifyCrashLoop(input)).toBeUndefined();
+  await expect(classifyCrashLoop(input)).rejects.toThrow(/Jev.*failed/);
   restore();
 
   const disabled = withJev({ port_in_use: 1 }, false);
   restore = disabled.restore;
-  expect(await classifyCrashLoop(input)).toBeUndefined();
+  await expect(classifyCrashLoop(input)).rejects.toThrow(/Jev.*disabled/);
   expect(disabled.seen).toHaveLength(0);
 });

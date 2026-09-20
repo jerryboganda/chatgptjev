@@ -118,17 +118,17 @@ test("an unusable summary, a dropped latest request, or a contradiction each rej
   }
 });
 
-test("a thin summary and uncertain verdicts are accepted rather than paying for a re-summary", async () => {
+test("uncertain, failed, or disabled Jev cannot approve a summary", async () => {
   restore = withJev(verdict(1.2, 0.5, 0.5)).restore;
-  expect((await judgeCompactionHandoff(request, summary)).acceptable).toBe(true);
+  await expect(judgeCompactionHandoff(request, summary)).rejects.toThrow(/Jev.*uncertain/);
 
   restore();
   restore = withJev(() => { throw new Error("gateway down"); }).restore;
-  expect(await judgeCompactionHandoff(request, summary)).toMatchObject({ acceptable: true, reasons: [] });
+  await expect(judgeCompactionHandoff(request, summary)).rejects.toThrow(/Jev.*failed/);
 
   restore();
   const disabled = withJev(verdict(0, 0, 1), false);
   restore = disabled.restore;
-  expect(await judgeCompactionHandoff(request, summary)).toEqual({ acceptable: true, reasons: [] });
+  await expect(judgeCompactionHandoff(request, summary)).rejects.toThrow(/Jev.*disabled/);
   expect(disabled.states).toHaveLength(0);
 });

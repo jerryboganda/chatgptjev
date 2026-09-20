@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { findTopLevelAssignment, splitLines } from "./codex-integration-document";
-import { confidentChoice, judge, judgeEnabled } from "./lib/judge";
+import { confidentChoice, judge, JevDecisionError } from "./lib/judge";
 
 /**
  * Item 20: route-conflict detection. The integration inspector refuses to touch a Codex route it no
@@ -43,6 +43,17 @@ export interface RouteConflictInput {
 const MAX_PROVIDER_TABLES = 12;
 const ROUTE_JUDGE_TIMEOUT_MS = 4_000;
 
+function routeUrlEvidence(value: string): string {
+  if (value === "absent") return value;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "unreadable";
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "unreadable";
+  }
+}
+
 /** The parts of config.toml that identify the current route owner; values only, no secrets. */
 export function currentRouteEvidence(configText: string): {
   openai_base_url: string;
@@ -73,16 +84,15 @@ export function currentRouteEvidence(configText: string): {
     }
     if (!current) continue;
     const field = /^\s*(base_url|name)\s*=\s*"([^"]*)"/.exec(line);
-    if (field) current[field[1] === "name" ? "name_field" : "base_url"] = field[2];
+    if (field) current[field[1] === "name" ? "name_field" : "base_url"] = field[1] === "name" ? field[2] : routeUrlEvidence(field[2]!);
   }
-  return { openai_base_url: read("openai_base_url"), model_provider: read("model_provider"), provider_tables: providerTables };
+  return { openai_base_url: routeUrlEvidence(read("openai_base_url")), model_provider: read("model_provider"), provider_tables: providerTables };
 }
 
-export async function judgeCodexRouteOwner(input: RouteConflictInput): Promise<{ owner: RouteOwner; fix: string } | undefined> {
-  if (!judgeEnabled()) return undefined;
+export async function judgeCodexRouteOwner(input: RouteConflictInput): Promise<{ owner: RouteOwner; fix: string }> {
   const evidence = currentRouteEvidence(input.configText);
   const answers = await judge("codex_route_owner", {
-    expected_route_url: input.expectedRouteUrl ?? "unknown",
+    expected_route_url: input.expectedRouteUrl === undefined ? "unknown" : routeUrlEvidence(input.expectedRouteUrl),
     current: evidence,
     source: "Codex CLI/Desktop `config.toml` after this bridge's managed route stopped matching. `expected_route_url` is the local URL this installation wrote; `current` is what the file contains now (`absent` means the assignment is not in the file).",
   }, {
@@ -91,14 +101,14 @@ export async function judgeCodexRouteOwner(input: RouteConflictInput): Promise<{
       instructions: "Who owns Codex's model route now, judging from `current` compared with `expected_route_url`?",
       criteria: Object.fromEntries(Object.entries(ROUTE_OWNERS).map(([owner, entry]) => [owner, entry.description])) as Record<RouteOwner, string>,
     },
-  }, { timeoutMs: ROUTE_JUDGE_TIMEOUT_MS }).catch(() => undefined);
-  const owner = confidentChoice(answers?.owner);
-  return owner ? { owner, fix: ROUTE_OWNERS[owner].fix } : undefined;
+  }, { timeoutMs: ROUTE_JUDGE_TIMEOUT_MS });
+  const owner = confidentChoice(answers.owner);
+  return { owner, fix: ROUTE_OWNERS[owner].fix };
 }
 
 /**
  * When the inspector reported a route conflict, returns one sentence naming the likely owner and the
- * fix; otherwise (no conflict, unreadable config, unsure or disabled Jev) returns `undefined`.
+ * fix; returns `undefined` only when no route conflict was reported.
  */
 export async function explainCodexRouteConflict(inspection: {
   errors: readonly string[];
@@ -110,8 +120,8 @@ export async function explainCodexRouteConflict(inspection: {
   try {
     configText = readFileSync(inspection.configPath, "utf8");
   } catch {
-    return undefined;
+    throw new JevDecisionError("codex_route_owner", "the conflicting config could not be read");
   }
   const verdict = await judgeCodexRouteOwner({ expectedRouteUrl: inspection.routeUrl, configText });
-  return verdict ? `Jev: the route now looks owned by ${verdict.owner.replace(/_/g, " ")}. ${verdict.fix}` : undefined;
+  return `Jev: the route now looks owned by ${verdict.owner.replace(/_/g, " ")}. ${verdict.fix}`;
 }

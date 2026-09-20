@@ -4,6 +4,7 @@ import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
 import { ChatGptBrowserWorker, closeChatGptBrowserWorkers, type BrowserTurn } from "./browser-worker";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
+import { JevDecisionError } from "../../lib/judge";
 import type { ChatGptWebCapabilities } from "./model";
 import { createProcessLineWriter } from "./process-line-writer";
 import { createBrowserHelperPromptSelection } from "./browser-helper-prompt-selection";
@@ -307,7 +308,7 @@ async function run(message: RunMessage): Promise<void> {
       id: message.id,
       name: error instanceof Error ? error.name : "Error",
       message: error instanceof Error ? error.message : String(error),
-      ...(error instanceof ChatGptWebAdapterError ? {
+      ...(error instanceof ChatGptWebAdapterError || error instanceof JevDecisionError ? {
         status: error.status,
         errorType: error.errorType,
         code: error.code,

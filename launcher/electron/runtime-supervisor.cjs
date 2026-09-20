@@ -345,11 +345,9 @@ class RuntimeSupervisor {
     this.launcherProfile = launcherProfile;
     this.publishOperation = publishOperation;
     this.runtimeInvocationFactory = runtimeInvocationFactory;
-    // Item 19: Jev names the crash kind through the runtime CLI; tests inject a fake (or `null` to
-    // disable), and without a gateway key in this process there is nothing the runtime could ask.
     this.classifyCrashLoop = classifyCrashLoop !== undefined
       ? classifyCrashLoop
-      : (process.env.AI_GATEWAY_API_KEY ? (input) => this.runCrashTriage(input) : null);
+      : (input) => this.runCrashTriage(input);
     this.configPath = path.join(coreHome, "config.json");
     this.statePath = path.join(coreHome, "runtime", "launcher-supervisor.json");
     this.daemon = null;
@@ -1313,15 +1311,21 @@ class RuntimeSupervisor {
     const triage = Promise.resolve()
       .then(() => this.classifyCrashLoop({ child: name, lastFailure: cause, restarts }))
       .then((verdict) => {
-        if (!verdict || typeof verdict.kind !== "string" || typeof verdict.fix !== "string") return;
+        if (!verdict || typeof verdict.kind !== "string" || typeof verdict.fix !== "string") {
+          throw new Error("Jev crash diagnosis returned no usable verdict");
+        }
         if (this.stopping || this.restartTimers[name] || this[name]) return;
         const hinted = `${message}. Jev: this looks like ${verdict.kind.replace(/_/g, " ")}. ${verdict.fix}`;
         this.logger.info(`runtime.${name}_crash_triaged`, { kind: verdict.kind });
         this.tryWriteState("failed", hinted);
         this.publishOperation?.({ name: "runtime-recovery", status: "failed", message: hinted });
       })
-      .catch((error) => {
-        this.logger.warn(`runtime.${name}_crash_triage_failed`, { message: errorMessage(error) });
+      .catch(() => {
+        const failure = `${message}. Jev crash diagnosis could not complete; check AI_GATEWAY_API_KEY and gateway availability, then retry. No diagnosis was substituted.`;
+        this.logger.warn(`runtime.${name}_crash_triage_failed`, { message: "Required Jev crash diagnosis failed" });
+        if (this.stopping || this.restartTimers[name] || this[name]) return;
+        this.tryWriteState("failed", failure);
+        this.publishOperation?.({ name: "runtime-recovery", status: "failed", message: failure });
       });
     this.recoveryTasks.add(triage);
     void triage.finally(() => this.recoveryTasks.delete(triage));

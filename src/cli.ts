@@ -67,7 +67,7 @@ Setup options:
                                Full mode: select, paste, and send in the launcher yourself
   --zero-risk-pro              Zero Risk: also install the explicit Pro-sized model row
   --zero-risk-default          Zero Risk: install only the default model row
-  --jev / --no-jev             Turn Jev judgments on (default) or off in every mode
+  --jev                       Compatibility flag; Jev is required in every mode
   --port NUMBER                Loopback Responses port (default: 17851)
   --chrome PATH                Google Chrome/Chromium executable used for account login
   --browser-host-descriptor PATH
@@ -321,8 +321,8 @@ async function setupCommand(args: string[]): Promise<void> {
   if (zeroRiskPro || zeroRiskDefault) options.zeroRiskProEnabled = zeroRiskPro;
   const jevOn = takeFlag(args, "--jev");
   const jevOff = takeFlag(args, "--no-jev");
-  if (jevOn && jevOff) throw new Error("Choose --jev or --no-jev");
-  if (jevOn || jevOff) options.jevEnabled = jevOn;
+  if (jevOff) throw new Error("Jev is required; --no-jev is not supported");
+  if (jevOn) options.jevEnabled = true;
   options.replaceCodexRoute = takeFlag(args, "--replace-codex-route");
   options.restartService = takeFlag(args, "--restart-service");
   assertNoArgs(args);

@@ -4232,7 +4232,7 @@ export class ChatGptBrowserWorker {
       .map(stripChatGptTraceControlSuffix)
       .filter(block => block.text.length > 0 && !isChatGptTraceControl(block));
     if (!snapshot.stoppedThinkingVisible) {
-      learnStoppedThinkingLabels(snapshot.traceBlocks.filter(block => block.kind === "status").map(block => block.text));
+      await learnStoppedThinkingLabels(snapshot.traceBlocks.filter(block => block.kind === "status").map(block => block.text));
     }
     return snapshot;
   }
@@ -5056,7 +5056,7 @@ export class ChatGptBrowserWorker {
             // decide whether one of the commentary Markdown blocks is really the final answer.
             const promoted = await judgeAnswerRootPromotion(
               snapshot.traceBlocks.filter(block => block.kind === "commentary" && !block.uiControl).map(block => block.text),
-            ).catch(() => undefined);
+            );
             if (promoted) {
               console.warn(`[chatgpt-web] browser turn ${turn.traceId} had no answer root; Jev promoted a commentary block to the final answer`);
               await diagnostics.capture(page, "response-promoted-commentary");
@@ -5119,8 +5119,6 @@ export class ChatGptBrowserWorker {
                 `[chatgpt-web] waiting for completed-turn evidence (running=${running}, sawRunning=${sawRunning}, textChars=${snapshot.visibleText.length}, completionActionVisible=${snapshot.completionActionVisible}, ui=${diagnostic})`,
               );
             }
-            // Item 6: ask Jev what the stalled turn is doing. Only a confident terminal verdict
-            // ends the turn; "still generating" and doubt keep waiting exactly as before.
             const stallFailure = await stalledTurnFailure({
               elapsedSec: stalledMs / 1000,
               running,
@@ -5128,7 +5126,7 @@ export class ChatGptBrowserWorker {
               statusTexts: snapshot.traceBlocks.filter(block => block.kind === "status").map(block => block.text),
               overlayTexts: await visibleChatGptDialogTexts(page, '[role="alert"], [role="dialog"], [role="status"]'),
               answerTail: snapshot.visibleText,
-            }).catch(() => undefined);
+            });
             if (stallFailure) {
               await diagnostics.capture(page, "response-stalled-judged");
               throw stallFailure;

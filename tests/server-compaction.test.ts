@@ -290,7 +290,7 @@ for (const stream of [false, true]) test(`failed compaction cannot authorize a c
     method: "POST", body: JSON.stringify({ ...original, input: [source, { type: "compaction_trigger" }] }),
   }), config, () => ({ name: "failed-checkpoint", async runTurn(_parsed, _incoming, emit) {
     emit({ type: "text_delta", text: summary, phase: "final_answer" });
-    emit({ type: "error", message: "Compaction failed before completion" });
+    emit({ type: "error", message: "Compaction failed before completion", status: 500, errorType: "server_error", code: "compaction_handoff_failed", retryable: false });
   } }));
   // Consume the stream as native Codex does; only an actual completed checkpoint is evidence.
   expect(await failed.text()).toContain("Compaction failed before completion");

@@ -50,20 +50,17 @@ test("candidate extraction prefers fenced blocks, then balanced spans longest fi
   expect(structuredOutputCandidates('{"ok":true,"count":')).toEqual([]);
 });
 
-test("without Jev, several valid candidates fall back to the last (deterministic) one and failures stay non-retryable", async () => {
+test("without Jev, ambiguous candidates and semantic failure triage stop explicitly", async () => {
   const validate = validator();
-  expect(await validate('Old: {"ok":false}\nNew: {"ok":true}')).toBe('{"ok":true}');
-  const error = await failure(validate('{"ok":"nope"}'));
-  expect(error.status).toBe(502);
-  expect(error.code).toBe("structured_output_validation_failed");
-  expect(error.retryable).toBe(false);
-  expect(error.message).not.toContain("(");
+  await expect(validate('Old: {"ok":false}\nNew: {"ok":true}')).rejects.toThrow(/Jev/);
+  await expect(validate('{"ok":"nope"}')).rejects.toThrow(/Jev/);
+  expect(await validate('{"ok":true}')).toBe('{"ok":true}');
 });
 
 test("Jev picks the intended candidate when the answer contains several valid JSON spans", async () => {
   const jev = withJev(questions => {
     const criteria = (questions.intended as { criteria: Record<string, string> }).criteria;
-    expect(Object.keys(criteria)).toEqual(["candidate_0", "candidate_1"]);
+    expect(Object.keys(criteria)).toEqual(["candidate_0", "candidate_1", "none"]);
     return { intended: { type: "choice", choice: "candidate_0", probabilities: { candidate_0: 0.92, candidate_1: 0.08 } } };
   });
   restore = jev.restore;
@@ -73,11 +70,19 @@ test("Jev picks the intended candidate when the answer contains several valid JS
   expect(jev.calls[0]!.state.schema_name).toBe("payload");
 });
 
-test("an unconfident candidate verdict keeps the deterministic fallback", async () => {
+test("an uncertain candidate verdict cannot substitute the last candidate", async () => {
   restore = withJev(() => ({
     intended: { type: "choice", choice: "candidate_0", probabilities: { candidate_0: 0.55, candidate_1: 0.45 } },
   })).restore;
-  expect(await validator()('{"ok":false} or {"ok":true}')).toBe('{"ok":true}');
+  await expect(validator()('{"ok":false} or {"ok":true}')).rejects.toThrow(/Jev.*uncertain/);
+});
+
+test("a single extracted example still needs semantic approval and later candidates are not dropped", async () => {
+  const jev = withJev(() => ({ intended: { type: "choice", choice: "none", probabilities: { none: 0.95, candidate_0: 0.05 } } }));
+  restore = jev.restore;
+  await expect(validator()('This is only an example: {"ok":true}')).rejects.toThrow(/Jev.*candidate/);
+  expect(jev.calls).toHaveLength(1);
+  expect(structuredOutputCandidates(Array.from({ length: 8 }, (_, index) => `{"value":${index}}`).join(" or "))).toHaveLength(8);
 });
 
 test("Jev triages an unrepairable failure: formatting or truncation is retryable, wrong content is not", async () => {
@@ -101,9 +106,7 @@ test("Jev triages an unrepairable failure: formatting or truncation is retryable
   restore();
 
   restore = withJev(kind("truncated", 0.5)).restore;
-  const unsure = await failure(validate('{"ok":tr'));
-  expect(unsure.retryable).toBe(false);
-  expect(unsure.message).not.toContain("(");
+  await expect(validate('{"ok":tr')).rejects.toThrow(/Jev.*uncertain/);
   restore();
 
   const throwing = configureJudgeForTests({
@@ -112,14 +115,12 @@ test("Jev triages an unrepairable failure: formatting or truncation is retryable
     evaluate: (async () => { throw new Error("gateway down"); }) as never,
   });
   restore = throwing;
-  const failedOpen = await failure(validate('{"ok":tr'));
-  expect(failedOpen.retryable).toBe(false);
-  expect(failedOpen.status).toBe(502);
+  await expect(validate('{"ok":tr')).rejects.toThrow(/Jev.*failed/);
 });
 
-test("a disabled judge never calls Jev even when the answer would be triaged", async () => {
+test("a disabled judge reports an explicit failure rather than an unjudged triage result", async () => {
   const jev = withJev(() => ({ failure_kind: { type: "choice", choice: "truncated", probabilities: { truncated: 0.95 } } }), false);
   restore = jev.restore;
-  await failure(validator()('{"ok":tr'));
+  await expect(validator()('{"ok":tr')).rejects.toThrow(/Jev.*disabled/);
   expect(jev.calls).toHaveLength(0);
 });

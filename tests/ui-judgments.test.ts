@@ -80,27 +80,27 @@ test("a confidently judged error dialog becomes a structured adapter failure wit
   });
 });
 
-test("non-error, uncertain, and code-owned dialogs never interrupt the turn", async () => {
+test("non-error and approval dialogs are judged, while uncertain dialogs stop explicitly", async () => {
   const jev = withJev(questions => "kind" in questions ? choice("tool_confirmation") : {});
   restore = jev.restore;
 
   await throwIfChatGptJudgedFailureDialog(fakePage(["Share this conversation with a link"]));
   await throwIfChatGptJudgedFailureDialog(fakePage(["Allow ChatGPT to use codex-jev?"]));
   await throwIfChatGptJudgedFailureDialog(fakePage(["Not in history · No model training · Memory off"]));
-  expect(jev.seen).toHaveLength(1);
+  expect(jev.seen).toHaveLength(3);
   expect(jev.seen[0]).toContain("Share this conversation");
 
   jev.restore();
   restore = withJev(() => choice("expired_session", 0.55)).restore;
-  await throwIfChatGptJudgedFailureDialog(fakePage(["Please log in again"]));
+  await expect(throwIfChatGptJudgedFailureDialog(fakePage(["Please log in again"]))).rejects.toThrow(/Jev.*uncertain/);
 });
 
-test("the judged fallback never touches the page while Jev is disabled", async () => {
+test("disabled Jev cannot bypass a visible dialog and an unreadable page is reported", async () => {
   restore = withJev(() => choice("generic_error"), false).restore;
   const untouchable = { locator: () => { throw new Error("page must not be read"); } } as unknown as Page;
 
-  expect(await visibleChatGptDialogTexts(untouchable)).toEqual([]);
-  await throwIfChatGptJudgedFailureDialog(untouchable);
+  await expect(visibleChatGptDialogTexts(untouchable)).rejects.toThrow(/page/);
+  await expect(throwIfChatGptJudgedFailureDialog(fakePage(["A new error occurred"]))).rejects.toThrow(/Jev.*disabled/);
 });
 
 test("throwIfChatGptSessionFailureAlert falls through to Jev only after the exact regexes miss", async () => {
@@ -120,29 +120,26 @@ test("throwIfChatGptSessionFailureAlert falls through to Jev only after the exac
   expect(jev.seen).toHaveLength(1);
 });
 
-test("unknown short status labels are judged once, off the critical path, and confirmed labels are learned", async () => {
-  const jev = withJev(() => ({ stopped: { type: "boolean", probability: 0.96 } }));
+test("all unknown status labels are awaited and successful judgments may be reused", async () => {
+  const jev = withJev(questions => Object.fromEntries(Object.keys(questions).map((id, index) => [id, { type: "boolean", probability: index === 0 ? 0.96 : 0.02 }])));
   restore = jev.restore;
   const novel = "Ha dejado de razonar";
 
-  learnStoppedThinkingLabels(["Stopped thinking", novel, "x".repeat(49), "Thinking about the failing test and how the fixture", novel]);
-  expect(learnedStoppedThinkingLabels.size).toBe(0);
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await learnStoppedThinkingLabels(["Stopped thinking", novel, "x".repeat(49), "Thinking about the failing test and how the fixture", novel]);
 
   expect(jev.seen).toHaveLength(1);
   expect(jev.seen[0]).toContain(novel);
+  expect(jev.seen[0]).toContain("Thinking about the failing test and how the fixture");
   expect([...learnedStoppedThinkingLabels]).toEqual([novel]);
 
-  learnStoppedThinkingLabels([novel]);
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await learnStoppedThinkingLabels([novel]);
   expect(jev.seen).toHaveLength(1);
 });
 
 test("an ordinary progress status is not learned as a stopped label", async () => {
-  restore = withJev(() => ({ stopped: { type: "boolean", probability: 0.03 } })).restore;
+  restore = withJev(questions => Object.fromEntries(Object.keys(questions).map(id => [id, { type: "boolean", probability: 0.03 }]))).restore;
 
-  learnStoppedThinkingLabels(["Analizando la solicitud"]);
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await learnStoppedThinkingLabels(["Analizando la solicitud"]);
   expect(learnedStoppedThinkingLabels.size).toBe(0);
 });
 
@@ -185,28 +182,30 @@ test("a stalled turn Jev confidently calls over becomes the matching structured 
   expect(await stalledTurnFailure(stalled({ running: true, overlayTexts: ["Log in or sign up"] }))).toMatchObject({ status: 401, code: "chatgpt_session_expired" });
 });
 
-test("still generating, doubt, a live stop button, or no judge all keep the turn waiting", async () => {
-  for (const answers of [stallChoice("still_generating"), stallChoice("unknown"), stallChoice("errored", 0.55)]) {
+test("only a generating verdict keeps waiting; uncertain or unavailable judgments stop", async () => {
+  restore = withJev(stallChoice("still_generating")).restore;
+  expect(await stalledTurnFailure(stalled({ statusTexts: ["Thinking"] }))).toBeUndefined();
+  for (const answers of [stallChoice("unknown"), stallChoice("errored", 0.55)]) {
     restore?.();
     restore = withJev(answers).restore;
-    expect(await stalledTurnFailure(stalled({ statusTexts: ["Thinking"] }))).toBeUndefined();
+    await expect(stalledTurnFailure(stalled({ statusTexts: ["Thinking"] }))).rejects.toThrow(/Jev/);
   }
 
   restore?.();
   restore = withJev(stallChoice("errored")).restore;
-  expect(await stalledTurnFailure(stalled({ running: true }))).toBeUndefined();
+  expect(await stalledTurnFailure(stalled({ running: true }))).toMatchObject({ code: "upstream_server_error" });
 
   restore();
   const off = withJev(stallChoice("errored"), false);
   restore = off.restore;
-  expect(await stalledTurnFailure(stalled())).toBeUndefined();
+  await expect(stalledTurnFailure(stalled())).rejects.toThrow(/Jev.*disabled/);
   expect(off.seen).toHaveLength(0);
 });
 
 const rootAnswers = (kinds: Record<string, [string, number?]>) => (questions: Record<string, unknown>) =>
   Object.fromEntries(Object.keys(questions).map(key => {
     const [kind, p = 0.9] = kinds[key] ?? ["intermediate_commentary"];
-    return [key, { type: "choice", choice: kind, probabilities: { [kind]: p, tool_status: 1 - p } }];
+    return [key, { type: "choice", choice: kind, probabilities: { [kind]: p, [kind === "tool_status" ? "intermediate_commentary" : "tool_status"]: 1 - p } }];
   }));
 
 test("a finished turn without an answer root promotes the last commentary block Jev confidently calls the final answer", async () => {
@@ -217,18 +216,19 @@ test("a finished turn without an answer root promotes the last commentary block 
   expect(jev.seen).toHaveLength(1);
   expect(JSON.parse(jev.seen[0]!)).toMatchObject({ turn_finished: true, blocks: [{ index: 0 }, { index: 1 }, { index: 2 }] });
 
-  // Only the newest blocks are judged, and empty text never reaches Jev.
+  // Every nonempty block is judged in bounded batches.
   restore();
-  const bounded = withJev(rootAnswers({ [`root_${MAX_PROMOTION_CANDIDATES - 1}`]: ["final_answer"] }));
+  const bounded = withJev(rootAnswers({ [`root_${MAX_PROMOTION_CANDIDATES + 2}`]: ["final_answer"] }));
   restore = bounded.restore;
   const many = Array.from({ length: MAX_PROMOTION_CANDIDATES + 3 }, (_, index) => `block ${index}`);
   expect(await judgeAnswerRootPromotion([...many, "   "])).toBe(`block ${MAX_PROMOTION_CANDIDATES + 2}`);
   expect(JSON.parse(bounded.seen[0]!).blocks).toHaveLength(MAX_PROMOTION_CANDIDATES);
+  expect(bounded.seen).toHaveLength(2);
 });
 
-test("doubt, non-answer verdicts, empty input, or no judge keep the empty-completion failure", async () => {
+test("uncertainty and disabled judgments fail explicitly; non-answer verdicts never invent an answer", async () => {
   restore = withJev(rootAnswers({ root_0: ["final_answer", 0.6] })).restore;
-  expect(await judgeAnswerRootPromotion(["Almost done."])).toBeUndefined();
+  await expect(judgeAnswerRootPromotion(["Almost done."])).rejects.toThrow(/Jev.*uncertain/);
 
   restore();
   restore = withJev(rootAnswers({ root_0: ["tool_status"], root_1: ["embedded_ui_chrome"] })).restore;
@@ -237,7 +237,7 @@ test("doubt, non-answer verdicts, empty input, or no judge keep the empty-comple
   restore();
   const off = withJev(rootAnswers({ root_0: ["final_answer"] }), false);
   restore = off.restore;
-  expect(await judgeAnswerRootPromotion(["The answer is 42."])).toBeUndefined();
+  await expect(judgeAnswerRootPromotion(["The answer is 42."])).rejects.toThrow(/Jev.*disabled/);
   expect(await judgeAnswerRootPromotion([])).toBeUndefined();
   expect(off.seen).toHaveLength(0);
 });
@@ -283,25 +283,25 @@ test("a composer-less page gets a precise instruction for the screen Jev confide
   expect(await describeChatGptLoginState(loginPage("What can I help with?"))).toContain("DOM may have changed");
 });
 
-test("unknown, unsure, unreadable pages, or no judge leave the generic composer error alone", async () => {
+test("unknown, uncertain, unreadable, or unjudged login pages are reported explicitly", async () => {
   restore = withJev(loginChoice("unknown")).restore;
-  expect(await describeChatGptLoginState(loginPage("Loading…"))).toBeUndefined();
+  await expect(describeChatGptLoginState(loginPage("Loading…"))).rejects.toThrow(/Jev/);
 
   restore();
   restore = withJev(loginChoice("login_form", 0.6)).restore;
-  expect(await describeChatGptLoginState(loginPage("Log in  Sign up"))).toBeUndefined();
+  await expect(describeChatGptLoginState(loginPage("Log in  Sign up"))).rejects.toThrow(/Jev.*uncertain/);
 
   restore();
   const jev = withJev(loginChoice("login_form"));
   restore = jev.restore;
   const unreadable = { url: () => { throw new Error("closed"); }, evaluate: async () => { throw new Error("closed"); } };
-  expect(await describeChatGptLoginState(unreadable as never)).toBeUndefined();
+  await expect(describeChatGptLoginState(unreadable as never)).rejects.toThrow(/Jev.*page/);
   expect(jev.seen).toHaveLength(0);
 
   restore();
   const off = withJev(loginChoice("login_form"), false);
   restore = off.restore;
-  expect(await describeChatGptLoginState(loginPage("Log in"))).toBeUndefined();
+  await expect(describeChatGptLoginState(loginPage("Log in"))).rejects.toThrow(/Jev.*disabled/);
   expect(off.seen).toHaveLength(0);
 });
 

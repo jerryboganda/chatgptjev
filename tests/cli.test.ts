@@ -119,7 +119,15 @@ test("setup browser-interaction flags are explicit and mutually exclusive", asyn
       CHATGPT_JEV_HOME: join(root, "app"),
     });
     expect(jevConflict.exitCode).toBe(1);
-    expect(jevConflict.stderr).toContain("Choose --jev or --no-jev");
+    expect(jevConflict.stderr).toContain("Jev is required");
+    const disabled = await runCli(["dev", "setup", "--browser-only", "--no-jev", "--acknowledge-unofficial"], {
+      ...process.env,
+      CHATGPT_JEV_DEV_HOME: join(root, "dev"),
+      CHATGPT_JEV_HOME: join(root, "app"),
+    });
+    expect(disabled.exitCode).toBe(1);
+    expect(disabled.stderr).toContain("Jev is required");
+    expect(existsSync(join(root, "dev", "config.json"))).toBeFalse();
     expect(existsSync(join(root, "app", "config.json"))).toBeFalse();
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -332,7 +340,7 @@ test("DEV browser-only setup persists only the isolated harness profile", async 
       "--browser-host-descriptor",
       descriptorPath,
       "--acknowledge-unofficial",
-      "--no-jev",
+      "--jev",
     ], {
       ...process.env,
       CHATGPT_JEV_DEV_HOME: devHome,
@@ -352,7 +360,7 @@ test("DEV browser-only setup persists only the isolated harness profile", async 
       browserHostDescriptorPath: descriptorPath,
       solAvailable: true,
       extraHighAvailable: false, proAvailable: false,
-      jevEnabled: false,
+      jevEnabled: true,
     });
     expect(existsSync(join(root, "production-codex", "config.toml"))).toBe(false);
     expect(existsSync(join(devHome, "codex-home", "config.toml"))).toBe(false);

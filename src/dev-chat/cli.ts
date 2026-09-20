@@ -360,7 +360,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
     }
     const jevOn = takeFlag(args, "--jev");
     const jevOff = takeFlag(args, "--no-jev");
-    if (jevOn && jevOff) throw new Error("Choose --jev or --no-jev");
+    if (jevOff) throw new Error("Jev is required; --no-jev is not supported");
     if (args.length > 0) throw new Error(`Unknown DEV setup arguments: ${args.join(" ")}`);
     const result = await setupDevProfile({
       mode: full ? "full" : "browser-only",
@@ -372,7 +372,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
         : {}),
       ...(biggerContext || standardContext ? { experimentalBiggerContext: biggerContext } : {}),
       ...(skillAttachments || inlineSkills ? { experimentalSkillAttachments: skillAttachments } : {}),
-      ...(jevOn || jevOff ? { jevEnabled: jevOn } : {}),
+      ...(jevOn ? { jevEnabled: true } : {}),
       ...(tunnelId ? { tunnelId } : {}),
       ...(runtimeKeyFile ? { runtimeKeyFile } : {}),
     });

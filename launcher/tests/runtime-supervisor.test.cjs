@@ -1314,10 +1314,10 @@ test("crash-loop give-up publishes the deterministic message first and appends a
   }
 });
 
-test("crash-loop triage that is unsure, failing, or disabled leaves the give-up message untouched", async () => {
+test("unavailable or invalid required crash triage is visible without guessing a diagnosis", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-crash-loop-no-triage-"));
   try {
-    for (const classifyCrashLoop of [async () => ({}), async () => { throw new Error("gateway down"); }, null]) {
+    for (const classifyCrashLoop of [async () => ({}), async () => { throw new Error("private gateway detail"); }]) {
       const operations = [];
       const supervisor = new RuntimeSupervisor({
         app: { getVersion: () => "0.2.0", isPackaged: false },
@@ -1332,11 +1332,32 @@ test("crash-loop triage that is unsure, failing, or disabled leaves the give-up 
       supervisor.lastChildFailure.tunnel = "tunnel exited (1): boom";
       supervisor.scheduleRecovery("tunnel");
       await Promise.all([...supervisor.recoveryTasks]);
-      assert.equal(operations.length, 1);
-      assert.doesNotMatch(operations[0].message, /Jev:/);
+      assert.equal(operations.length, 2);
+      assert.match(operations[1].message, /Jev crash diagnosis could not complete/);
+      assert.doesNotMatch(operations[1].message, /private gateway detail|this looks like/);
+      const state = JSON.parse(fs.readFileSync(path.join(root, "runtime", "launcher-supervisor.json"), "utf8"));
+      assert.equal(state.detail, operations[1].message);
     }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("missing gateway credentials do not remove the production crash-triage path", () => {
+  const previous = process.env.AI_GATEWAY_API_KEY;
+  delete process.env.AI_GATEWAY_API_KEY;
+  try {
+    const supervisor = new RuntimeSupervisor({
+      app: { getVersion: () => "0.2.0", isPackaged: false },
+      logger: { info() {}, warn() {}, error() {} },
+      sourceRoot: os.tmpdir(),
+      coreHome: os.tmpdir(),
+      browserDescriptorPath: path.join(os.tmpdir(), "launcher.json"),
+    });
+    assert.equal(typeof supervisor.classifyCrashLoop, "function");
+  } finally {
+    if (previous === undefined) delete process.env.AI_GATEWAY_API_KEY;
+    else process.env.AI_GATEWAY_API_KEY = previous;
   }
 });
 

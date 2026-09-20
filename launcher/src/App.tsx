@@ -1648,17 +1648,6 @@ function SettingsSurface({
       setBusy(false);
     }
   };
-  const setJev = async (enabled: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      setJevStatus(await api!.jev(enabled));
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
   const setInteractionMode = async (mode: BrowserInteractionMode) => {
     setBusy(true);
     setError(null);
@@ -1746,14 +1735,10 @@ function SettingsSurface({
           />
         </SettingRow>
         <SettingRow
-          body={jev && !jev.keyPresent ? `${copy.jevJudgmentsBody} ${copy.jevKeyMissing}` : copy.jevJudgmentsBody}
+          body={jev && !jev.keyPresent ? copy.jevKeyMissing : copy.jevJudgmentsBody}
           label={copy.jevJudgments}
         >
-          <Switch
-            checked={jev?.enabled ?? true}
-            disabled={busy || !jev?.configured || snapshot.state.coreSetupComplete !== true}
-            onChange={(checked) => void setJev(checked)}
-          />
+          {null}
         </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
           <LanguageMenu copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />

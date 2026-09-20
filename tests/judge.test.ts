@@ -6,6 +6,7 @@ import {
   judge,
   judgeEnabled,
   nearestScoreLevel,
+  setJudgeEnabled,
   type JudgeEvent,
 } from "../src/lib/judge";
 
@@ -29,15 +30,15 @@ function fakeEvaluate(answers: unknown, delayMs = 0) {
   return { fn: fn!, calls: () => calls };
 }
 
-test("judge is fail-open: disabled or missing key resolves to undefined without calling the model", async () => {
+test("judge refuses a missing key instead of bypassing Jev", async () => {
   const events: JudgeEvent[] = [];
   const fake = fakeEvaluate({});
   const restore = configureJudgeForTests({ evaluate: fake.fn, enabled: true, apiKey: () => undefined, onEvent: e => events.push(e) });
   try {
     expect(judgeEnabled()).toBe(false);
-    expect(await judge("site", "text", QUESTIONS)).toBeUndefined();
+    await expect(judge("site", "text", QUESTIONS)).rejects.toThrow(/Jev.*AI_GATEWAY_API_KEY/);
     expect(fake.calls()).toBe(0);
-    expect(events.map(e => e.outcome)).toEqual(["disabled"]);
+    expect(events.map(e => e.outcome)).toEqual(["failed"]);
   } finally {
     restore();
   }
@@ -66,45 +67,100 @@ test("judge returns typed answers, caches by state hash, and logs probabilities 
   }
 });
 
-test("judge times out and fails open", async () => {
+test("judge reports a timeout instead of falling back", async () => {
   const events: JudgeEvent[] = [];
   const fake = fakeEvaluate({}, 5_000);
   const restore = configureJudgeForTests({ evaluate: fake.fn, enabled: true, apiKey: () => "k", timeoutMs: 20, onEvent: e => events.push(e) });
   try {
-    expect(await judge("site", "slow", QUESTIONS)).toBeUndefined();
+    await expect(judge("site", "slow", QUESTIONS)).rejects.toThrow(/Jev.*timed out/);
     expect(events[0]?.outcome).toBe("timeout");
   } finally {
     restore();
   }
 });
 
-test("judge swallows provider errors", async () => {
+test("judge reports provider failure without leaking its response", async () => {
   const events: JudgeEvent[] = [];
   const restore = configureJudgeForTests({
-    evaluate: (async () => { throw new Error("gateway 503"); }) as never,
+    evaluate: (async () => { throw new Error("gateway 503 private-provider-content"); }) as never,
     enabled: true,
     apiKey: () => "k",
     onEvent: e => events.push(e),
   });
   try {
-    expect(await judge("site", "x", QUESTIONS)).toBeUndefined();
-    expect(events[0]).toMatchObject({ outcome: "failed", error: "gateway 503" });
+    await expect(judge("site", "x", QUESTIONS)).rejects.toThrow(/Jev.*failed/);
+    expect(events[0]?.outcome).toBe("failed");
+    expect(JSON.stringify(events)).not.toContain("private-provider-content");
   } finally {
     restore();
   }
 });
 
-test("confidence thresholds: choice needs p>=0.7 and margin>=0.3, noul is decisive only outside (0.3, 0.7)", () => {
+test("uncertain or missing consumed judgments stop the decision", () => {
   expect(confidentChoice({ choice: "a", probabilities: { a: 0.75, b: 0.2, c: 0.05 } })).toBe("a");
-  expect(confidentChoice({ choice: "a", probabilities: { a: 0.6, b: 0.4 } })).toBeUndefined();
-  expect(confidentChoice({ choice: "a", probabilities: { a: 0.7, b: 0.45 } })).toBeUndefined();
-  expect(confidentChoice({ choice: "a" })).toBeUndefined();
-  expect(confidentChoice(undefined)).toBeUndefined();
+  expect(() => confidentChoice<"a" | "b">({ choice: "a", probabilities: { a: 0.6, b: 0.4 } })).toThrow(/Jev.*uncertain/);
+  expect(() => confidentChoice<"a" | "b">({ choice: "a", probabilities: { a: 0.7, b: 0.45 } })).toThrow(/Jev/);
+  expect(() => confidentChoice({ choice: "a" })).toThrow(/Jev/);
+  expect(() => confidentChoice(undefined)).toThrow(/Jev/);
   expect(confidentBoolean({ probability: 0.7 })).toBe(true);
   expect(confidentBoolean({ probability: 0.3 })).toBe(false);
-  expect(confidentBoolean({ probability: 0.5 })).toBeUndefined();
-  expect(confidentBoolean(undefined)).toBeUndefined();
+  expect(() => confidentBoolean({ probability: 0.5 })).toThrow(/Jev.*uncertain/);
+  expect(() => confidentBoolean(undefined)).toThrow(/Jev/);
+  expect(() => confidentBoolean({ probability: Number.NaN })).toThrow(/Jev/);
   expect(nearestScoreLevel({ score: 1.4 }, 4)).toBe(1);
   expect(nearestScoreLevel({ score: 7 }, 4)).toBe(3);
-  expect(nearestScoreLevel(undefined, 4)).toBeUndefined();
+  expect(() => nearestScoreLevel(undefined, 4)).toThrow(/Jev/);
+});
+
+test("the runtime switch cannot disable required Jev judgments", () => {
+  expect(() => setJudgeEnabled(false)).toThrow(/Jev.*required/);
+});
+
+test("judge enforces its deadline even when the provider ignores cancellation", async () => {
+  const restore = configureJudgeForTests({
+    evaluate: (() => new Promise(() => {})) as never,
+    enabled: true,
+    apiKey: () => "k",
+    timeoutMs: 20,
+  });
+  try {
+    await expect(judge("unresponsive", "text", QUESTIONS)).rejects.toThrow(/Jev.*timed out/);
+  } finally {
+    restore();
+  }
+});
+
+test("caller cancellation stops an unresponsive provider without replacing the caller reason", async () => {
+  let providerSignal: AbortSignal | undefined;
+  const restore = configureJudgeForTests({
+    evaluate: ((options: { abortSignal: AbortSignal }) => {
+      providerSignal = options.abortSignal;
+      return new Promise(() => {});
+    }) as never,
+    enabled: true, apiKey: () => "k", timeoutMs: 100,
+  });
+  const controller = new AbortController();
+  const reason = new Error("owning operation deadline");
+  try {
+    const pending = judge("cancelled", "text", QUESTIONS, { signal: controller.signal });
+    await Promise.resolve();
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+    expect(providerSignal?.aborted).toBeTrue();
+  } finally {
+    restore();
+  }
+});
+
+test("a cached verdict cannot revive an already cancelled operation", async () => {
+  const fake = fakeEvaluate({ yes: { type: "boolean", probability: 0.99 } });
+  const restore = configureJudgeForTests({ evaluate: fake.fn, enabled: true, apiKey: () => "k" });
+  try {
+    await judge("cached", "text", QUESTIONS);
+    const reason = new Error("caller cancelled");
+    await expect(judge("cached", "text", QUESTIONS, { signal: AbortSignal.abort(reason) })).rejects.toBe(reason);
+    expect(fake.calls()).toBe(1);
+  } finally {
+    restore();
+  }
 });

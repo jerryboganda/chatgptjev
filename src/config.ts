@@ -9,7 +9,6 @@ import {
 } from "./chatgpt-web-models";
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
-import { setJudgeEnabled } from "./lib/judge";
 
 export type RuntimeMode = "browser-only" | "full";
 export type BrowserHostMode = "managed-chrome" | "launcher";
@@ -91,7 +90,7 @@ export interface AppConfig {
   zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */
   stallTimeoutSec?: number;
-  /** Jev judgments (TypeSafe) in every mode including Zero Risk; omit or `true` = on, `false` = off. */
+  /** Legacy field: loaded profiles always require Jev, including Zero Risk. */
   jevEnabled?: boolean;
   autoApproveToolCalls: boolean;
   controlToken: string;
@@ -345,11 +344,7 @@ export function defaultChromeExecutable(
 export function loadConfig(): AppConfig {
   const path = getConfigPath();
   if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run chatgpt-jev setup first.`);
-  const config = parseConfig(JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))), path);
-  // Disable-only: every process that reads the config honours the launcher's Jev toggle, while the
-  // test default (off under NODE_ENV=test) can never be switched on by a config file.
-  if (config.jevEnabled === false) setJudgeEnabled(false);
-  return config;
+  return parseConfig(JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))), path);
 }
 
 export function loadConfigForSetup(): AppConfig {
@@ -514,6 +509,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.jevEnabled !== undefined && typeof parsed.jevEnabled !== "boolean") {
     throw new Error(`Invalid jevEnabled in ${path}`);
   }
+  if (parsed.jevEnabled === false) {
+    console.warn("[chatgpt-jev] Jev is required; the legacy jevEnabled:false setting is ignored.");
+  }
   const solAvailable = parsed.solAvailable !== false;
   const proAvailable = parsed.proAvailable === true;
   if (parsed.experimentalSkillAttachments !== undefined && typeof parsed.experimentalSkillAttachments !== "boolean") {
@@ -536,6 +534,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   }
   return {
     ...parsed,
+    jevEnabled: true,
     appName: expectedAppName,
     automaticAppName,
     manualAppName,

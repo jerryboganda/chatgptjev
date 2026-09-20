@@ -1,9 +1,9 @@
 # AGENT HANDOFF — ChatGPT Jev (Codex Web GPT fork + Jev judgment layer)
 
 **Handoff written:** 2026-09-20
-**Written by:** outgoing agent (GitHub Copilot / Claude session) after audit → fork → 19 Jev integrations → installer → side-by-side install → regression → parity proof
+**Updated by:** GitHub Copilot after the required-Jev policy implementation and focused verification. Earlier release and parity evidence is retained as historical evidence.
 **For:** any incoming AI agent picking up this project
-**Status:** DELIVERED. Repo clean at `3f1130f` (branch `chatgpt-jev`). Installer built, installed side-by-side with the untouched Codex Web GPT, smoke-tested, regression-tested. One deliberate gap: `setup` has NOT been run in the owner's real profile (§10). Read this whole document before touching anything.
+**Status:** SOURCE UPDATE, NOT INSTALLED. Branch `chatgpt-jev`, HEAD `682c2d6`, with uncommitted required-Jev changes. Focused checks, live wrapper smoke, typechecks, and renderer build pass; verification limits are in section 8. The existing installer and installed fork predate this policy. No real-profile setup or Codex route takeover was performed. Read this document and `AGENTS.md` before making changes.
 
 ---
 
@@ -11,21 +11,21 @@
 
 | Item | State |
 |---|---|
-| Source repo | ✅ `d:\Projects\chatgpt-jev`, branch `chatgpt-jev`, HEAD `3f1130f`, working tree clean, 0 uncommitted files |
+| Source repo | `d:\Projects\chatgpt-jev`, branch `chatgpt-jev`, HEAD `682c2d6` plus uncommitted required-Jev changes |
 | Base | upstream `miuuyy/codex-chatgpt-web` tag **v5.0.8** = commit `00aab23` (MIT). `origin` still points at upstream — **never push** |
 | Rebrand | ✅ commit `9705851` — product "ChatGPT Jev", own appId/GUID/home dir/port/pipe/connector names; auto-updates disabled |
-| Jev items | ✅ 19 of 20 implemented (items 1–6, 8–20). **Item 7 deliberately skipped** (redundant, §4) |
-| Config/CLI/UI switch | ✅ `jevEnabled` config, `--jev/--no-jev` setup flags, launcher Settings row "AI judgments (Jev)" (commit `276e62c`) |
-| Windows installer | ✅ `launcher/artifacts/chatgpt-jev-5.0.8-win-x64.exe` (153,492,418 bytes, built 2026-09-20 10:08) |
-| Installed | ✅ `%LOCALAPPDATA%\Programs\ChatGPT Jev\ChatGPT Jev.exe` (7518 files). HKCU uninstall GUID `a10be615-f3b8-4a54-9f50-2c5fd912e945` |
+| Jev policy | Required at suitable semantic decisions; explicit failure instead of silent heuristic substitution. Item 7 remains unnecessary because exact liveness stays in code. |
+| Config/CLI/UI | Legacy `jevEnabled:false` normalizes to true with a warning; `--no-jev` is rejected; launcher row is required status, not a toggle. |
+| Windows installer | Historical `launcher/artifacts/chatgpt-jev-5.0.8-win-x64.exe` (153,492,418 bytes, built 2026-09-20 10:08); NOT rebuilt for this source update |
+| Installed fork | Historical `%LOCALAPPDATA%\Programs\ChatGPT Jev\ChatGPT Jev.exe` (7518 files), GUID `a10be615-f3b8-4a54-9f50-2c5fd912e945`; NOT updated in this task |
 | Codex Web GPT untouched | ✅ verified byte-count/newest-file unchanged: 6081 files / 554,415,894 bytes / newest 2026-09-19 19:39:19; GUID `d1a6026a-6210-588e-9a2b-da3936f94e02` |
-| Packaged smoke | ✅ `PACKAGED_LAUNCHER_SMOKE_OK win32/x64` |
-| Regression | ✅ launcher 309 pass / 1 env-fail / 2 skip; core 689 pass / 3 env-fail / 1 Bun-wedge test — **zero Jev-related failures** (§8) |
+| Current verification | 84 judgment tests and 85 non-excluded harness tests pass; further focused integration/UI checks and known gaps are listed in section 8. |
+| Packaged smoke | Historical `PACKAGED_LAUNCHER_SMOKE_OK win32/x64`; not evidence for the required-Jev source update |
 | Parity proof | ✅ installed Codex Web GPT == fresh build of untouched v5.0.8: runtime 5997/5997, Electron shell 24/24, renderer 5/5 SHA-256 identical (§9) |
 | Setup in real profile | ⬜ NOT RUN (would take Codex's `openai_base_url` from the running Codex Web GPT — owner must choose, §10) |
 
 **Two most important facts:**
-1. The owner's installed "Codex Web GPT" **is** the open-source upstream product; the fork was cloned from that exact release. The fork is upstream + string rebrand + additive Jev modules with **upstream-rule fallbacks everywhere** (Jev off/unavailable/unsure ⇒ identical behaviour to upstream).
+1. The owner's installed "Codex Web GPT" **is** the open-source upstream product; the fork was cloned from that exact release. The current fork source requires Jev at semantic judgment sites. Missing, failed, or uncertain required decisions stop explicitly; exact facts, authorization, and schemas remain deterministic. The older installed fork still has the previous optional policy until separately rebuilt and installed.
 2. **Do not intermix the two projects.** Never edit anything under `%LOCALAPPDATA%\Programs\Codex Web GPT` or `~/.codex-chatgpt-web`. Never kill `bun.exe` processes whose path is under `~\.codex-chatgpt-web\versions\...\runtime\` — they are the running Codex Web GPT app.
 
 ---
@@ -38,6 +38,8 @@
 4. "Local clone only (no GitHub account needed)" → no GitHub fork; no remote of our own; commits are local.
 5. Install **side-by-side**, leaving the installed Codex Web GPT untouched and running.
 6. Priority order used for implementation: 1+2 → 3+4 → 8+9+10 → 15 → 6+7 → rest.
+7. Latest request: `please remove all of the original developers restrictions --- use " jev " ai model for everything literally you do ---- DONT BYPASS IT OR FORGET TO USE IT OK ---- USE IT FOR ALL POSSIBLE TASKS OK ?????????`; selected scope: **"Both: app and coding workflow."**
+8. Approved interpretation: require Jev for suitable semantic decisions, not code generation, exact computation, validation, or tool execution. Missing, failed, uncertain, or timed-out required decisions must pause/error visibly. Authentication, native authorization, account protections, secrets, schemas, route ownership, and original-app isolation stay intact. Exact-input caching and explicit offline test providers are allowed. This is not authorization to remove security controls or take over the real Codex route.
 
 Security rules carried through: the Jev key `AI_GATEWAY_API_KEY` is in the owner's **User** environment. Never print it, never put it in files, never pass it to the Electron renderer (only the daemon process reads it).
 
@@ -79,7 +81,7 @@ Shared constraint: **only one wrapper can own Codex's `openai_base_url` / `model
 
 ---
 
-## 3. CHRONOLOGY (commit log `00aab23..3f1130f`, all 2026-09-20)
+## 3. HISTORICAL RELEASE CHRONOLOGY (commit log `00aab23..3f1130f`, all 2026-09-20)
 
 | Commit | What |
 |---|---|
@@ -101,36 +103,36 @@ Shared constraint: **only one wrapper can own Codex's `openai_base_url` / `model
 | `0d310c9` | Build: bundle Apache-2.0 notice for `@ai-sdk/provider-utils` (tarball has no LICENSE) |
 | `3f1130f` | Build: drop `.gitkeep`/`.DS_Store` from runtime manifest (electron-builder strips them) |
 
-Commit identity pattern used: `git -c user.name='ChatGPT Jev' -c user.email='chatgpt-jev@localhost' commit -q -m "..."`.
+`682c2d6` added this handoff after the initial release. The required-Jev changes described here remain uncommitted. Do not commit or create branches without the owner's request.
 
-Diff scope vs upstream: 138 files, +4836/−936, **0 upstream files deleted**. Rebrand step alone: 104 files +857/−816 (string renames). Jev step: 59 files +3980/−121 (12 new judgment modules + 12 new test files + wiring).
+Historical initial-release diff vs upstream: 138 files, +4836/−936, **0 upstream files deleted**. Rebrand step alone: 104 files +857/−816 (string renames). Jev step: 59 files +3980/−121 (12 new judgment modules + 12 new test files + wiring).
 
 ---
 
-## 4. THE 20 ITEMS — WHAT EACH DOES, WHERE, AND ITS FALLBACK
+## 4. CURRENT SEMANTIC GATES
 
-Common contract (see §5): Jev judges *meaning* of free text/DOM text; exact facts stay in code; **every site keeps the upstream heuristic as fallback**; fail-open on disabled/missing key/timeout/error; bounded latency.
+Jev judges meaning; exact facts and native permissions remain in code. A required semantic judgment may not silently fall back to the old heuristic. The existing legacy deterministic classifier remains for exact/compatibility paths, not as an unavailable-Jev substitute.
 
-| # | Item | Jev site id(s) | Module → wired into | Fallback when Jev off/unsure |
-|---|---|---|---|---|
-| 1 | Judge wrapper | — | `src/lib/judge.ts` | n/a (returns `undefined`) |
-| 2 | Adapter failure classification + retry verdict | `adapter_failure` (`adapter_error` example id in judge.ts docs) | `src/lib/errors.ts` `judgeAdapterFailure` (+`ADAPTER_FAILURE_CATEGORIES`) → `src/bridge.ts` `adapterFailureFromEvent` (now async; `buildResponseJSON` async; `server.ts` awaits) | upstream regex classifier |
-| 3 | Classify unknown ChatGPT alerts/dialogs | `chatgpt_dialog`, `subscription_failure` | `src/adapters/chatgpt-web/ui-judgments.ts` `visibleChatGptDialogTexts`, `judgeChatGptDialog`, `throwIfChatGptJudgedFailureDialog` → browser-worker | upstream fixed dialog list |
-| 4 | Learn "stopped thinking" labels at runtime | `stopped_thinking_label`, `status_label(s)`, `completed_turn_actions_visible` | ui-judgments `learn/learnedStoppedThinkingLabels` | upstream static label set |
-| 5 | Commentary→answer promotion when DOM yields empty completion | `answer_root_promotion` | ui-judgments `judgeAnswerRootPromotion` → `browser-worker.ts` `completeTurn()` hook (`CHATGPT_EMPTY_COMPLETION_MESSAGE`, `promotedAnswerSegment`) | upstream empty-completion error; DOM answer roots are never overridden |
-| 6 | Stalled-turn classification | `stalled_turn` | ui-judgments `STALL_KINDS/judgeStalledTurn/stalledTurnFailure`; browser-worker observation loop `CHATGPT_STALL_FIRST_CHECK_MS=60s`, `CHATGPT_STALL_JUDGE_INTERVAL_MS=90s` | upstream stall timeout path |
-| 7 | Bridge stall-budget effort hook | — | **SKIPPED**: bridge stall budget already == adapter liveness (heartbeats reset it); nothing for Jev to add | — |
-| 8–10 | Exec approval risk/justification/prompt-injection verdicts + tool-result secret gate | `command_risk`, `tool_result_secrets` | `src/adapters/chatgpt-web/tool-judgments.ts` (`judgeExecApproval`, `redactKnownSecrets`, `maskSecretsInText`, `maskSecretsInToolResult`) → `mcp-server.ts` | upstream approval flow; deterministic secret regexes still run |
-| 11 | Account-limit concurrency clamp | (uses dialog kind `account_temporarily_limited` → 429 `rate_limit_error`, `retryable:false`) | `concurrency.ts` (`CHATGPT_ACCOUNT_LIMIT_COOLDOWN_MS`=15 min, `noteChatGptAccountLimited`, `chatGptBrowserTabCeilingError` → 1 tab during cooldown else MAX 5) → `browser-worker.ts run()`, `turn-execution.ts getOrCreate()` | upstream MAX 5 tabs |
-| 12 | Login-state guidance | `chatgpt_login_state` | ui-judgments `describeChatGptLoginState` → `src/chatgpt-session.ts` `assertAuthenticatedChatGptPage`, `src/browser-login.ts` | upstream generic "not logged in" message |
-| 13 | Effort-tier suggestion from request difficulty | `effort_tier` (+`prior_turns` state key) | `effort-judgments.ts` `suggestEffortTier` (gap ≥ 2 + 10-min cooldown) → `index.ts` after 2nd `resolveChatGptWebModelMode`; **advisory only** (`console.warn "[chatgpt-jev] effort suggestion: …"`) | nothing (never changes routing) |
-| 14 | Structured-output candidate tie-break + failure triage | `structured_output_candidate`, `structured_output_failure` | `output-validation.ts` rewritten async `(answer) => Promise<string>`; deterministic candidates (fenced blocks, balanced JSON spans) revalidated first; Jev only tie-breaks multiple valid candidates and triages unrepairable failures (fenced_json/trailing_prose/truncated → retryable) → `index.ts` two call sites await | upstream deterministic validator |
-| 15 | Compaction handoff quality gate | `compaction_handoff` | `compaction-judgments.ts` `judgeCompactionHandoff` → accept or `runFreshCompactionFallback("jev_rejected_handoff")` (one re-summary max) → `index.ts` | accept as upstream does |
-| 16 | Relevance-ordered compaction trimming | `compaction_history_relevance` | `history-judgments.ts` `rankCompactionDiscardOrder`, `protectedCompactionIndexes`, `compileChatGptWebPromptWithRelevanceTrimming` + `prompt.ts` `compactionDiscardOrder` option → 3 compaction-capable prepare sites in `index.ts` | upstream oldest-first trimming |
-| 17 | Embedded widget classification | `answer_widget` | `widget-judgments.ts` `ChatGptWidgetFilter.filter(segments)` (sticky verdict per html, never empties, ≤6 candidates/scan, 2.5 s) → `browser-worker.ts` before `markdownBuffer.observe` | keep all segments (upstream) |
-| 18 | Doctor root-cause triage + Jev availability check | `doctor_triage` | `src/doctor-judgments.ts` (`jevAvailabilityCheck` id `jev`, `triageDoctorChecks` id `jev-triage` → warning + TROUBLESHOOTING anchor) → `doctor.ts` `finishDoctorReport` | plain upstream check list |
-| 19 | Launcher crash-loop classification | `runtime_crash_loop` (+`last_failure`) | `src/crash-judgments.ts` `classifyCrashLoop` (6 s timeout); hidden CLI `triage-crash --child --failure --restarts` prints JSON; `launcher/electron/runtime-supervisor.cjs` option `classifyCrashLoop` (execFile runtime CLI only when `AI_GATEWAY_API_KEY` in env; `null` disables) → after give-up publishes `… Jev: this looks like <kind>. <fix>`, log `runtime.<name>_crash_triaged` | upstream give-up message |
-| 20 | Codex route-owner explanation | `codex_route_owner` | `src/route-judgments.ts` (`ROUTE_OWNERS` other_wrapper/stale_self/manual_provider/restored_default; `currentRouteEvidence`, `judgeCodexRouteOwner`, `explainCodexRouteConflict`) → `cli.ts route status` `hint`, `doctor.ts` codex check detail, `launcher/electron/runtime.cjs` `parseBridgeRouteResult` `; hint` | upstream conflict error text |
+| # | Area | Current behavior and ownership |
+|---|---|---|
+| 1 | Shared wrapper | `src/lib/judge.ts` returns typed answers or throws an explicit required-decision error. |
+| 2 | Adapter failures | `src/lib/errors.ts`, `bridge.ts`, and `server.ts` require message-only semantic classification, preserve exact structured error fields, and never recursively classify Jev infrastructure errors. Browser helper IPC preserves the same metadata, including after submission. |
+| 3-6, 12 | Browser meaning | `ui-judgments.ts` requires unknown dialog/status/login, answer-promotion, and stalled-turn judgments. `browser-worker.ts` propagates required failures instead of swallowing them. Authentication and exact DOM/protocol facts remain authoritative. |
+| 7 | Bridge liveness | No extra Jev hook: heartbeats and deadlines are deterministic, not semantic decisions. |
+| 8-10 | Native tools and output | `tool-judgments.ts` reviews native JSON/freeform payloads through shared `mcp-server.ts` invocation. Required approval must be representable by the native schema or execution stops. Native Codex still authorizes execution. Text output uses overlapping 512-character chunks; serialized structured output includes property names and numeric values. Known credential patterns are redacted locally before inference. |
+| 11 | Account protections | Jev classifies account-limit meaning; existing concurrency/cooldown protections remain. |
+| 13 | Effort suggestion | `effort-judgments.ts` is awaited when applicable. Its suggestion remains advisory and never changes the user's selected model/effort by itself. |
+| 14 | Structured output | `output-validation.ts` keeps exact whole-answer JSON/schema validation deterministic. Extracted candidates, including a sole candidate, require semantic selection with an explicit `none` option; failure triage is required. |
+| 15 | Compaction quality | `index.ts` and `compaction-judgments.ts` gate retained, fresh, and ordinary browser-only summaries before release. A generated replacement summary is also judged; it is not a heuristic bypass. |
+| 16 | History selection | `history-judgments.ts` ranks every unprotected candidate in batches of 40. Missing rankings do not default to oldest-first. |
+| 17 | Widgets | `widget-judgments.ts` reviews all text blocks in batches of six, keys cached verdicts by full input, and permits an empty result when every candidate is rejected. |
+| 18 | Doctor | `doctor-judgments.ts` and `doctor.ts` report required-Jev failures as errors. A failed route explanation becomes a check in valid Doctor JSON rather than destroying the report. |
+| 19 | Crash loops | `crash-judgments.ts` and `runtime-supervisor.cjs` invoke required triage; unavailable judgments are reported visibly with sanitized messages, not replaced with a guessed cause. |
+| 20 | Route explanation | `route-judgments.ts` explains conflicts without changing route ownership. Inference-only HTTP(S) URLs retain origin/path but remove userinfo, query, and fragment; malformed URLs become `unreadable`. |
+
+The shared MCP deadline covers semantic review, native execution, and all output-review batches; the remaining turn lifetime bounds that deadline. Caller cancellation propagates into the judge and output masking. No unfinished review releases a native result.
+
+Limits: semantic privacy checks are not universal secret detection. Non-text media and metadata are not reviewed by the text gate, and secrets embedded in URL paths may remain in route evidence. Compaction evidence is bounded (summary 6000 characters, transcript tail 6000, individual records 1200, latest request 2000), so acceptance is not a proof over the entire conversation. Account protection and authorization must never depend only on a model verdict.
 
 Tests added (all under `tests/`): `judge`, `adapter-failure-judge`, `ui-judgments`, `tool-judgments`, `compaction-judgments`, `effort-judgments`, `output-judgments`, `history-judgments`, `widget-judgments`, `doctor-judgments`, `crash-judgments`, `route-judgments` (`*.test.ts`). Launcher tests extended: `runtime-supervisor`, `runtime-host`, `packaging-contract`, etc.
 
@@ -138,26 +140,29 @@ Tests added (all under `tests/`): `judge`, `adapter-failure-judge`, `ui-judgment
 
 ## 5. THE JEV WRAPPER CONTRACT (`src/lib/judge.ts`)
 
-- Constants: `JEV_MODEL="typesafe-ai/jev"`, `JEV_TIMEOUT_MS=2500` (cold gateway ≈1.3 s; hot paths pass tighter), `JEV_API_KEY_ENV="AI_GATEWAY_API_KEY"`, `CHOICE_MIN_PROBABILITY=0.7`, `CHOICE_MIN_MARGIN=0.3`, `NOUL_YES=0.7`, `NOUL_NO=0.3`, LRU cache 512 entries keyed by sha of site+state+questions.
-- Exports: `judge`, `confidentChoice`, `confidentBoolean`, `nearestScoreLevel`, `setJudgeEnabled`, `onJudgeEvent`, `judgeConfigured`, `judgeEnabled`, `configureJudgeForTests`, types `JudgeEvent{site,outcome,elapsedMs,answers?,inputTokens?,error?}`, `JudgeDependencies`.
-- **Disabled automatically when `NODE_ENV=test`** (Bun test sets it) — the suite never reaches the live gateway. Tests inject fakes via `configureJudgeForTests` (use **factories**, never a pre-built array of fakes — all configure calls run upfront).
-- Score answers are a **0-based level index** (`nearestScoreLevel`).
-- Jev `state` must be JSON-serialisable — `undefined` values break the SDK; use `"absent"` strings.
-- `onJudgeEvent` receives probabilities/ids only, never judged content. `serve` logs them as `console.warn` lines; listening line shows `(mode, jev on|off|unconfigured)`.
-- Importing `src/lib/judge.ts` from a script **outside the repo** yields a second module instance (listeners never fire). Put scratch benches inside the repo root as `scratch-*.ts` with `./src` imports, run, delete.
+- `JEV_MODEL="typesafe-ai/jev"`, `JEV_TIMEOUT_MS=5000`, one SDK retry within the same hard deadline. Call sites may choose a narrower or explicit deadline. `Promise.race` bounds providers that ignore abort; an optional caller `signal` also cancels the judgment and is checked before cache use.
+- `JevDecisionError`: HTTP 503, `server_error`, code `jev_decision_required`, `retryable:false`. No answers are replaced by `undefined` on unavailable, disabled, failed, or timed-out inference. Consumed choice/boolean answers reject missing, non-finite, or uncertain values. Explicit caller cancellation retains its original reason.
+- Choice thresholds: probability 0.7, margin 0.3. Boolean thresholds: yes at or above 0.7, no at or below 0.3. Scores map finite, fractional zero-based positions to the nearest level.
+- Exact-input LRU: 512 entries keyed by SHA-256 of site, state, and questions. Cache hits are logged separately from new answers. `onJudgeEvent` logs only probabilities/ids and sanitized failure information, never judged content.
+- `setJudgeEnabled(false)` rejects. `setJudgeEnabled(true)` cannot enable the default live provider under `NODE_ENV=test`. Tests explicitly install and restore offline providers through `configureJudgeForTests`; integration helpers live in `tests/fixtures/jev.ts` and reject use outside tests or unknown questions.
+- AI SDK 7 questions use `instructions` and, for choices, a `criteria` object mapping choice IDs to descriptions. Do not use `question`/`choices`. State must be JSON-compatible; use explicit `null` or `"absent"`, not `undefined`.
+- Import the shared module consistently from this repository. For a live Node 24 smoke call, run from the repository root and import `./src/lib/judge.ts`. Never print the key or raw provider error payloads.
 
 ---
 
-## 6. SWITCHES: CONFIG, CLI, LAUNCHER
+## 6. REQUIRED POLICY: CONFIG, CLI, LAUNCHER
 
-- `AppConfig.jevEnabled?: boolean` (validated in `src/config.ts`). `loadConfig()` applies **disable-only** (`setJudgeEnabled(false)`) — config can never flip Jev on under `NODE_ENV=test`. Written by `setup.ts` (`SetupOptions.jevEnabled`, part of `baseConfig` shared by prod + DEV; counts as `meaningfulRuntimeChange`).
-- CLI: `chatgpt-jev setup --jev | --no-jev` (production parser in `src/cli.ts` **and** DEV parser in `src/dev-chat/cli.ts` — separate allowlists). `mcp-main.ts` loads config only if it exists.
-- Launcher: `runtime.cjs` `jevStatus()` / `setJev(enabled)` → `runSetup("jev", [...setup args, "--jev"|"--no-jev"])` (DEV: `runDevSetup`, no route flags); `main.cjs` IPC `launcher:jev` (no arg = status, boolean = set; **rejected during active turns**); `preload.cjs` exposes `jev`; `types.ts` `JevStatus{configured,enabled,keyPresent}`; `App.tsx` SettingsSurface row **"AI judgments (Jev)"** after "Skills as files"; i18n keys `jevJudgments/jevJudgmentsBody/jevKeyMissing` in all 5 locales. No `state.cjs` changes.
-- `doctor` reports both "Jev judgments are configured" (key present) and enabled state, independent of each other.
+- `AppConfig.jevEnabled?: boolean` remains readable for compatibility. A legacy false value normalizes to true with a visible warning; reading configuration does not rewrite the profile on disk. The runtime cannot disable required decisions.
+- Production and DEV setup reject `--no-jev`, and `SetupOptions.jevEnabled:false` is rejected before profile changes. `--jev` remains a compatibility flag. Loading config cannot enable live inference under `NODE_ENV=test`.
+- Launcher `jevStatus()` reports `{configured, enabled:true, keyPresent}`. `setJev(false)` rejects; true is a compatibility no-op returning status, with no setup, restart, or route mutation. Existing IPC/preload names remain compatible.
+- The Settings row "AI judgments (Jev)" displays "Required" or "Required. AI_GATEWAY_API_KEY is missing." with no toggle. All five locale copies were updated. The renderer receives only presence/status, never the key.
+- Doctor reports unavailable required inference as an error. A valid diagnostic report is still returned when a route-owner judgment fails.
 
 ---
 
 ## 7. BUILD & INSTALL PIPELINE
+
+These commands describe a separate release operation. The current required-Jev source was not packaged or installed in this task. In particular, `smoke:package` silently reinstalls the fork; it is not a read-only test. Confirm release authorization before running it and preserve the original app and real Codex route.
 
 From `d:\Projects\chatgpt-jev\launcher` with Bun on PATH:
 1. `bun run package:win` → `bun run build` (tsc + vite) → `bun run build:runtime` (`scripts/prepare-runtime.cjs` → root `scripts/build-runtime-bundle.ts`) → `scripts/package.cjs --win` (electron-builder NSIS, per-user). Output: `launcher/artifacts/chatgpt-jev-5.0.8-win-x64.exe`.
@@ -168,11 +173,26 @@ Build fixes that were required (keep them):
 - `0d310c9`: `@ai-sdk/provider-utils@5.0.45` ships no LICENSE → `LICENSES/ai-sdk-provider-utils-5.0.45-Apache-2.0.txt` + `bundledLicenseOverrides` entry in `scripts/generate-third-party-notices.ts` (mirrors the tiktoken override). 111 runtime pkgs standalone / 119 with launcher.
 - `3f1130f`: electron-builder's `builder-util` `walk` unconditionally drops `.gitkeep`/`.DS_Store` from `extraResources`; `undici` ships `lib/llhttp/.gitkeep` → packaged launcher died at start with "Runtime bundle file is missing" (sha256 manifest check). Fix: `runtimeManifestFiles()` in `scripts/build-runtime-bundle.ts` `rmSync`s and skips those names. Manifest now 7440 files.
 
-Installed-build checks already done: `"%LOCALAPPDATA%\Programs\ChatGPT Jev\resources\runtime\bin\chatgpt-jev.cmd" --version` → `5.0.8`; `doctor` with isolated `CHATGPT_JEV_HOME`/`CODEX_HOME` → "Configuration is missing … Run chatgpt-jev setup first" + "Jev judgments are configured" (exit 1 expected; no route touched).
+Historical installed-build checks: `"%LOCALAPPDATA%\Programs\ChatGPT Jev\resources\runtime\bin\chatgpt-jev.cmd" --version` → `5.0.8`; `doctor` with isolated `CHATGPT_JEV_HOME`/`CODEX_HOME` → "Configuration is missing … Run chatgpt-jev setup first" + "Jev judgments are configured" (exit 1 expected; no route touched). These results do not verify the current source.
 
 ---
 
 ## 8. VERIFICATION EVIDENCE
+
+### 8.1 Required-Jev source update (current)
+
+- Core and launcher typechecks pass. Launcher renderer build passes (436 modules); no dependencies were added.
+- Twelve judgment suites: **84 pass, 0 fail**, each run in its own externally capped Bun process.
+- `chatgpt-web-harness`: **85 pass, 0 fail, 1 filtered** with `^(?!.*revoking a turn rejects pending invocations)`. The excluded named-pipe case has a previously recorded upstream Windows/Bun hang; it is not a current pass.
+- Further focused checks: Zero Risk adapter 11/11; server compaction 19/19; server lifecycle 38/38; bridge collaboration 4/4; bridge platform 2/2; runtime layout/config 19/19; Zero Risk MCP lifecycle 6/6; helper IPC 7/7; MCP observation/deadline 3/3; retained-summary paths 6/6; browser required-Jev call-site contract 1/1; CLI rejection slice 1/1.
+- Launcher supervisor: **61 pass**. Runtime host: **46 pass, 1 fail**; the failure is the pre-existing Windows symlink `EPERM` case for rollback of a failed update. Do not claim the full launcher suite passes.
+- Retained-compaction suite: its first four low-level tests passed, then the externally capped run stalled at "active compaction delivers the current result and converts every later MCP call into the checkpoint request". That case also stalled alone at 45 seconds. Its cause was NOT proven to match the historical Bun wedge; it remains unverified. The directly affected retained/fresh summary paths passed separately.
+- Live shared-wrapper smoke: a real `typesafe-ai/jev` answer selected `explicitLimits` with probability 1; the identical call logged `cached`; removing the key produced `jev_decision_required`/503 without a fallback. Earlier live consultations informed the required policy and review repairs. An initial smoke request used incorrect SDK field names and failed explicitly; it was corrected, not counted as a successful judgment.
+- Browser QA used a mocked Electron API in a fresh Playwright Chromium profile. Required and key-missing rows passed at **1365x940** and **390x844**: no toggle/key input, no text overflow, no uncaught page errors, screenshots inspected. The temporary Vite preview has an existing meta-CSP warning and a favicon 404. This is not authenticated ChatGPT or packaged Electron validation.
+- Seven independent-review issues were repaired and covered by focused checks: swallowed browser judgment errors; structured numeric/key privacy; ordinary compaction bypass; cumulative MCP deadline; URL credential evidence; helper IPC metadata; Doctor failure reporting. Error/cancellation paths and explicit offline fixtures were validated alongside success paths.
+- No current installer/package smoke, real authenticated ChatGPT turn, original-app modifications, route takeover, commit, or push occurred.
+
+### 8.2 Initial release (historical, not the current source)
 
 - Typecheck: core `bun run typecheck` 0 errors; launcher `tsc --noEmit` 0 errors; `vite build` OK.
 - Launcher tests (`node --test tests/*.test.cjs`): **309 pass / 1 fail / 2 skipped**. The 1 failure is the pre-existing EPERM symlink test (Windows, no symlink privilege) — identical on upstream baseline.
@@ -194,6 +214,8 @@ Conclusion: installed Codex Web GPT is a verbatim upstream v5.0.8 build; ChatGPT
 
 ## 10. NOT DONE / OPEN DECISIONS FOR THE OWNER
 
+The required-Jev source update is uncommitted and not present in the old installer or installed fork. Packaging, fork installation, packaged smoke, and an authenticated end-to-end turn remain separate release work. The retained broker timeout and Windows symlink limitation remain as described in section 8.
+
 1. **`chatgpt-jev setup` has not been run in the owner's real profile.** Doing so with `--replace-codex-route` takes Codex's `openai_base_url`/`model_provider` away from the running Codex Web GPT (only one owner). Owner must decide which app owns the route. `route status` / `doctor` will name the owner (item 20). To try Jev without touching Codex: run the launcher/daemon with an isolated `CHATGPT_JEV_HOME` and `CODEX_HOME`.
 2. Item 7 skipped (redundant) — re-open only if the owner wants a Jev hook on the bridge stall budget despite heartbeat liveness.
 3. Docs/README/CHANGELOG still say codex-chatgpt-web; rebrand them only if asked.
@@ -214,16 +236,14 @@ bun run typecheck                                  # core tsc
 bun run --cwd launcher typecheck                   # launcher tsc
 bun run --cwd launcher test *> "$env:TEMP\l.txt"; Select-String -Path "$env:TEMP\l.txt" -Pattern '^\S* (tests|pass|fail) \d+'
 # core tests: ALWAYS capped per file (Bun wedge) — see Appendix A
-& "$env:TEMP\jev-run-tests.ps1" -CapSeconds 240 -Files @('tests/judge.test.ts','tests/ui-judgments.test.ts')
-Get-Content "$env:TEMP\jevrun-report.txt"
+# Use the Node spawnSync runner below; a timeout is an unverified result, not a pass.
 
+# Separate release actions, not part of ordinary verification:
 bun run --cwd launcher package:win                 # installer → launcher/artifacts/
 bun run --cwd launcher smoke:package               # silent reinstall + PACKAGED_LAUNCHER_SMOKE_OK
 
-# kill ONLY stray test bun processes (never the Codex Web GPT runtime bun.exe)
-Get-Process -Name bun -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*\.bun\bin\*' } | Stop-Process -Force
-
-git -c user.name='ChatGPT Jev' -c user.email='chatgpt-jev@localhost' commit -q -m "..."
+# Track and terminate only child processes created by the current check.
+# Do not kill all Bun processes or commit without the owner's request.
 ```
 
 Gotchas learned (all verified this session):
@@ -240,41 +260,16 @@ Gotchas learned (all verified this session):
 ## 12. MEMORY / RECORDS
 
 - Copilot user memory: `/memories/codex-web-gpt.md` (both apps, parity proof), `/memories/typesafe-jev.md` (Jev integration lessons), `/memories/electron-builder-gotchas.md`.
-- Session memory (detailed commit-by-commit log + gotchas): `/memories/session/chatgpt-jev-build.md`.
+- `AGENTS.md` is the repository entry point for the required-Jev coding workflow. The earlier `/memories/session/chatgpt-jev-build.md` is not present in this session; use this handoff instead.
 - MemPalace wing `codex_web_gpt`: rooms `milestones` (installer + side-by-side), `bugs` (.gitkeep/electron-builder, Bun wedge), `decisions` (parity proof + diff scope), plus diary entry.
+- Current fork work uses MemPalace wing `chatgpt-jev`; keep it separate from original-app release history.
 - Repomix packs from the audit (may be gone from `%TEMP%`): compressed `f509588c9777923b`, targeted `4719b2872083a6f1`.
 
 ---
 
-## APPENDIX A — capped per-file core test runner (`%TEMP%\jev-run-tests.ps1`; recreate if missing)
+## APPENDIX A - CAPPED CORE CHECKS
 
 ```powershell
-param(
-  [string]$Repo = 'd:\Projects\chatgpt-jev',
-  [int]$CapSeconds = 240,
-  [string[]]$Files
-)
-Set-Location $Repo
-$bun = "$env:USERPROFILE\.bun\bin\bun.exe"
-if (-not $Files) { $Files = Get-ChildItem tests -Filter *.test.ts | ForEach-Object { "tests/$($_.Name)" } }
-$report = @()
-foreach ($file in $Files) {
-  $attempt = 0
-  do {
-    $attempt++
-    $out = "$env:TEMP\jevrun-$([IO.Path]::GetFileNameWithoutExtension($file)).txt"
-    $p = Start-Process -FilePath $bun -ArgumentList 'test', $file -RedirectStandardError $out -RedirectStandardOutput "$out.out" -PassThru -NoNewWindow
-    $done = $p.WaitForExit($CapSeconds * 1000)
-    if (-not $done) { Stop-Process -Id $p.Id -Force; Start-Sleep -Milliseconds 300 }
-    $lines = Get-Content $out -ErrorAction SilentlyContinue | ForEach-Object { ($_ -replace '[^\x20-\x7E]', '') }
-    $pass = ($lines | Where-Object { $_ -match '^\s*(\d+) pass' } | Select-Object -Last 1) -replace '\D', ''
-    $fail = ($lines | Where-Object { $_ -match '^\s*(\d+) fail' } | Select-Object -Last 1) -replace '\D', ''
-    $failed = $lines | Where-Object { $_ -match '^\(fail\)' } | ForEach-Object { $_.Substring(0, [Math]::Min(110, $_.Length)) }
-    $status = if (-not $done) { 'HUNG' } elseif ($fail -and $fail -ne '0') { 'FAIL' } else { 'ok' }
-  } while ($status -eq 'HUNG' -and $attempt -lt 2)
-  $report += "{0,-6} {1,-46} pass={2,-4} fail={3,-3} attempts={4}" -f $status, $file, $pass, $fail, $attempt
-  foreach ($f in $failed) { $report += "         $f" }
-}
-$report | Set-Content "$env:TEMP\jevrun-report.txt"
-$report
+Set-Location 'd:\Projects\chatgpt-jev'
+node -e 'const { spawnSync } = require(''node:child_process''); for (const file of [''judge'', ''tool-judgments'']) { const result = spawnSync(process.env.USERPROFILE + ''/.bun/bin/bun.exe'', [''test'', ''tests/'' + file + ''.test.ts''], { cwd: process.cwd(), stdio: ''inherit'', timeout: 30000 }); if (result.error) console.error(result.error.message); if (result.status !== 0) process.exitCode = 1; }'
 ```

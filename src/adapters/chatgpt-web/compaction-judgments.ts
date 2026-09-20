@@ -1,4 +1,4 @@
-import { confidentBoolean, judge, judgeConfigured, judgeEnabled, nearestScoreLevel } from "../../lib/judge";
+import { confidentBoolean, judge, nearestScoreLevel } from "../../lib/judge";
 import type { CodexMessage, CodexParsedRequest } from "../../types";
 import { LATEST_USER_PROMPT_MARKER } from "./compaction-handoff";
 import { extractChatGptCompactionSourceRevision } from "./environment";
@@ -12,7 +12,7 @@ export const COMPACTION_COMPLETENESS_LEVELS = [
 ] as const;
 
 export interface CompactionHandoffVerdict {
-  /** False only when Jev is confident the summary would lose the thread; fail-open otherwise. */
+  /** Approval requires completed, decisive Jev judgments. */
   acceptable: boolean;
   completeness?: number;
   preservesLatestUserRequest?: boolean;
@@ -26,8 +26,6 @@ export const MAX_TRANSCRIPT_TAIL_CHARS = 6000;
 export const MAX_LATEST_REQUEST_CHARS = 2000;
 /** Compaction is already a slow path; give the three batched verdicts room for a large summary. */
 export const COMPACTION_JUDGE_TIMEOUT_MS = 6000;
-
-const ACCEPT: CompactionHandoffVerdict = { acceptable: true, reasons: [] };
 
 function clipEnd(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max)}…`;
@@ -91,7 +89,6 @@ export async function judgeCompactionHandoff(
   parsed: CodexParsedRequest,
   summary: string,
 ): Promise<CompactionHandoffVerdict> {
-  if (!judgeEnabled() || !judgeConfigured()) return ACCEPT;
   const answers = await judge("compaction_handoff", {
     summary: summaryBody(summary),
     latest_user_request: latestUserRequest(parsed) ?? null,
@@ -112,13 +109,11 @@ export async function judgeCompactionHandoff(
       instructions: "Does the summary state something the transcript tail contradicts, such as different files, decisions, results, or task status?",
     },
   }, { timeoutMs: COMPACTION_JUDGE_TIMEOUT_MS });
-  if (!answers) return ACCEPT;
-
   const completeness = nearestScoreLevel(answers.completeness, COMPACTION_COMPLETENESS_LEVELS.length);
   const preservesLatestUserRequest = confidentBoolean(answers.preserves_latest_user_request);
   const introducesContradiction = confidentBoolean(answers.introduces_contradiction);
   const reasons: string[] = [];
-  if (completeness !== undefined && completeness < MIN_ACCEPTABLE_COMPLETENESS) {
+  if (completeness < MIN_ACCEPTABLE_COMPLETENESS) {
     reasons.push(`completeness ${completeness}/${COMPACTION_COMPLETENESS_LEVELS.length - 1}`);
   }
   if (preservesLatestUserRequest === false) reasons.push("drops the latest user request");

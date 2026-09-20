@@ -46,6 +46,7 @@ import {
   settleActiveZeroRiskCompactionSource,
 } from "./compaction-handoff";
 import { judgeCompactionHandoff } from "./compaction-judgments";
+import { JevDecisionError } from "../../lib/judge";
 import { suggestEffortTier } from "./effort-judgments";
 import { compileChatGptWebPromptWithRelevanceTrimming } from "./history-judgments";
 import {
@@ -299,6 +300,9 @@ function replayEvents(events: AdapterEvent[], emit: (event: AdapterEvent) => voi
 
 function submittedTurnFailure(session: ChatGptTurnSession, error: unknown): Error {
   const normalized = error instanceof Error ? error : new Error(String(error));
+  if (normalized instanceof JevDecisionError) {
+    return new ChatGptWebAdapterError(normalized.message, { ...normalized, cause: normalized });
+  }
   if (normalized instanceof ChatGptWebAdapterError) return normalized;
   const phase = session.runtime.submission?.phase;
   if (!phase || phase === "prepared") return normalized;
@@ -833,13 +837,18 @@ export function createChatGptWebAdapter(
           ? { localTools: true }
           : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
         if (!manualRequest && !parsed._compactionRequest && "effort" in mode) {
-          // Item 13: off the critical path; a suggestion only, the routed model still fixes the effort.
-          void suggestEffortTier(parsed.context.messages, mode.effort).then(suggestion => {
-            if (suggestion) console.warn(`[chatgpt-jev] effort suggestion: ${suggestion}`);
-          });
+          const suggestion = await suggestEffortTier(parsed.context.messages, mode.effort);
+          if (suggestion) console.warn(`[chatgpt-jev] effort suggestion: ${suggestion}`);
         }
         const structuredOutputValidator = parsed._compactionRequest
-          ? undefined
+          ? async (answer: string): Promise<string> => {
+            const summary = canonicalizeCompactionHandoff(parsed, answer);
+            const verdict = await withAbort(judgeCompactionHandoff(parsed, summary), incoming.abortSignal);
+            if (!verdict.acceptable) {
+              throw new JevDecisionError("compaction_handoff", "the summary was rejected; retry compaction with complete context");
+            }
+            return summary;
+          }
           : createChatGptStructuredOutputValidator(parsed.options.outputFormat);
         const bufferStructuredOutput = structuredOutputValidator !== undefined;
         const retryKey = `${executionNamespace}:${chatGptTurnRetryKey(parsed)}`;
@@ -959,7 +968,12 @@ export function createChatGptWebAdapter(
                     try {
                       const rawSummary = await withAbort(fallbackRuntime.browser, operationSignal);
                       await withAbort(fallbackRuntime.physicalSettlement, operationSignal);
-                      return canonicalizeCompactionHandoff(parsed, rawSummary);
+                      const summary = canonicalizeCompactionHandoff(parsed, rawSummary);
+                      const verdict = await withAbort(judgeCompactionHandoff(parsed, summary), operationSignal);
+                      if (!verdict.acceptable) {
+                        throw new JevDecisionError("compaction_handoff", "the replacement summary was rejected; retry compaction with complete context");
+                      }
+                      return summary;
                     } catch (error) {
                       fallbackRuntime.cancel(error instanceof Error ? error : new Error(String(error)));
                       // The shared owner retains physical settlement independently of this error.
@@ -1047,8 +1061,6 @@ export function createChatGptWebAdapter(
                       );
                     }
                     const summary = canonicalizeCompactionHandoff(parsed, rawSummary);
-                    // Item 15: judge the handoff before the retained conversation is retired so a
-                    // summary that would lose the thread is re-summarized once (fail-open on doubt).
                     const verdict = await judgeCompactionHandoff(parsed, summary);
                     await withAbort(
                       preserveFinalResponse
@@ -1112,10 +1124,10 @@ export function createChatGptWebAdapter(
               console.error("[chatgpt-web] structured context handoff failed:", handoffError);
               emit({
                 type: "error",
-                message: "ChatGPT did not complete the context handoff. Retry the task.",
-                status: 409,
-                errorType: "invalid_request_error",
-                code: "compaction_handoff_failed",
+                message: handoffError instanceof JevDecisionError ? handoffError.message : "ChatGPT did not complete the context handoff. Retry the task.",
+                status: handoffError instanceof JevDecisionError ? handoffError.status : 409,
+                errorType: handoffError instanceof JevDecisionError ? handoffError.errorType : "invalid_request_error",
+                code: handoffError instanceof JevDecisionError ? handoffError.code : "compaction_handoff_failed",
                 retryable: false,
               });
               return;

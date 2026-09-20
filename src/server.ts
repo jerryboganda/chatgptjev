@@ -22,6 +22,7 @@ import { providerConfig } from "./config";
 import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
 import { httpStatusFromTerminalError } from "./lib/errors";
+import { JevDecisionError } from "./lib/judge";
 import { createHash } from "node:crypto";
 import { augmentNativeModelCatalog } from "./model-catalog";
 import {
@@ -619,7 +620,16 @@ export async function responseRequest(
         queue.push(event);
       });
     } catch (error) {
-      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+      const event: AdapterEvent = {
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof JevDecisionError || error instanceof ChatGptWebAdapterError ? {
+          status: error.status,
+          errorType: error.errorType,
+          code: error.code,
+          retryable: error.retryable,
+        } : {}),
+      };
       options.onAdapterEvent?.(event);
       queue.push(event);
     } finally {

@@ -50,7 +50,7 @@ export interface CrashLoopVerdict {
 const MAX_FAILURE_TEXT = 2_000;
 const CRASH_JUDGE_TIMEOUT_MS = 6_000;
 
-export async function classifyCrashLoop(input: CrashLoopInput): Promise<CrashLoopVerdict | undefined> {
+export async function classifyCrashLoop(input: CrashLoopInput): Promise<CrashLoopVerdict> {
   const answers = await judge("runtime_crash_loop", {
     child: input.child,
     last_failure: input.lastFailure.slice(0, MAX_FAILURE_TEXT),
@@ -62,7 +62,7 @@ export async function classifyCrashLoop(input: CrashLoopInput): Promise<CrashLoo
       instructions: "Which kind of failure does `last_failure` most likely describe?",
       criteria: Object.fromEntries(Object.entries(CRASH_KINDS).map(([kind, cause]) => [kind, cause.description])) as Record<CrashKind, string>,
     },
-  }, { timeoutMs: CRASH_JUDGE_TIMEOUT_MS }).catch(() => undefined);
-  const kind = confidentChoice(answers?.crash_kind);
-  return kind ? { kind, fix: CRASH_KINDS[kind].fix } : undefined;
+  }, { timeoutMs: CRASH_JUDGE_TIMEOUT_MS });
+  const kind = confidentChoice(answers.crash_kind);
+  return { kind, fix: CRASH_KINDS[kind].fix };
 }

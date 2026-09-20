@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bridgeToResponsesSSE } from "../src/bridge";
 import { adapterFailureFromMessage, judgeAdapterFailure } from "../src/lib/errors";
-import { configureJudgeForTests } from "../src/lib/judge";
+import { configureJudgeForTests, JevDecisionError } from "../src/lib/judge";
 import type { AdapterEvent } from "../src/types";
 
 type Answers = {
@@ -56,18 +56,17 @@ test("Jev refines a message-only failure to Codex's code, status and retryabilit
   }
 });
 
-test("uncertain, 'none', disabled or failing Jev keeps the keyword payload", async () => {
-  const cases: Array<[() => ReturnType<typeof withJev>, Partial<Awaited<ReturnType<typeof judgeAdapterFailure>>>]> = [
-    [() => withJev(verdict("permission_denied", 0.6, 0.5, 0.5)), { source: "keywords", retryable: undefined, userActionRequired: undefined }],
-    [() => withJev(verdict("none", 0.99, 0.1, 0.1)), { source: "keywords", retryable: false, userActionRequired: false }],
-    [() => withJev(verdict("permission_denied", 0.99, 0.1, 0.9), false), { source: "keywords", retryable: undefined }],
-    [() => withJev(() => { throw new Error("gateway down"); }), { source: "keywords" }],
+test("uncertain, unmatched, disabled or failed Jev cannot substitute a keyword payload", async () => {
+  const cases = [
+    () => withJev(verdict("permission_denied", 0.6, 0.5, 0.5)),
+    () => withJev(verdict("none", 0.99, 0.1, 0.1)),
+    () => withJev(verdict("permission_denied", 0.99, 0.1, 0.9), false),
+    () => withJev(() => { throw new Error("gateway down"); }),
   ];
-  for (const [configure, expected] of cases) {
+  for (const configure of cases) {
     const jev = configure();
     try {
-      const failure = await judgeAdapterFailure(SUSPENDED);
-      expect(failure).toMatchObject({ httpStatus: 503, error: { code: "server_is_overloaded" }, ...expected });
+      await expect(judgeAdapterFailure(SUSPENDED)).rejects.toThrow(/Jev/);
     } finally {
       jev.restore();
     }
@@ -78,7 +77,7 @@ test("exact client-close phrases and empty messages never consult Jev", async ()
   const jev = withJev(verdict("upstream_server_error", 0.99, 0.9, 0.1));
   try {
     expect(await judgeAdapterFailure("Request cancelled by client")).toMatchObject({ httpStatus: 499, source: "keywords" });
-    expect(await judgeAdapterFailure("   ")).toMatchObject({ source: "keywords" });
+    await expect(judgeAdapterFailure("   ")).rejects.toThrow(/Jev/);
     expect(jev.calls()).toBe(0);
   } finally {
     jev.restore();
@@ -119,6 +118,36 @@ test("bridge streams the Jev-refined error for message-only adapter failures and
     expect(explicit).toContain('"code":"upstream_server_error"');
     expect(explicit).toContain('"retryable":true');
     expect(jev.calls()).toBe(1);
+  } finally {
+    jev.restore();
+  }
+});
+
+test("a failed required judgment reaches SSE with its exact code and no recursive classification", async () => {
+  const jev = withJev(() => { throw new Error("private gateway failure"); });
+  try {
+    const response = await new Response(bridgeToResponsesSSE(
+      failing({ type: "error", message: SUSPENDED }), "chatgpt-web/test",
+    )).text();
+    expect(response).toContain('"code":"jev_decision_required"');
+    expect(response).toContain('"retryable":false');
+    expect(response).not.toContain("private gateway failure");
+    expect(jev.calls()).toBe(1);
+  } finally {
+    jev.restore();
+  }
+});
+
+test("a Jev error thrown by the adapter preserves its exact protocol metadata without a model call", async () => {
+  const jev = withJev(() => { throw new Error("unexpected recursive classification"); });
+  async function* rejectedTurn(): AsyncGenerator<AdapterEvent> {
+    throw new JevDecisionError("test_turn", "the required decision is unavailable");
+  }
+  try {
+    const response = await new Response(bridgeToResponsesSSE(rejectedTurn(), "chatgpt-web/test")).text();
+    expect(response).toContain('"code":"jev_decision_required"');
+    expect(response).toContain('"retryable":false');
+    expect(jev.calls()).toBe(0);
   } finally {
     jev.restore();
   }

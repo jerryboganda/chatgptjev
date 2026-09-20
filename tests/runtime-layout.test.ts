@@ -205,7 +205,7 @@ test("Zero Risk fails closed without the Launcher browser host", () => {
   expect(() => loadConfig()).toThrow("requires the launcher browser host");
 });
 
-test("jevEnabled is validated and can only switch Jev off for the loading process", () => {
+test("legacy Jev settings cannot disable required judgments or enable live inference in tests", () => {
   const root = join(tmpdir(), `chatgpt-jev-jev-toggle-${process.pid}-${Date.now()}`);
   roots.push(root);
   process.env.CHATGPT_JEV_HOME = root;
@@ -218,20 +218,26 @@ test("jevEnabled is validated and can only switch Jev off for the loading proces
   const restore = configureJudgeForTests({ enabled: true, apiKey: () => "test-key" });
   try {
     write(undefined);
-    expect(loadConfig().jevEnabled).toBeUndefined();
+    expect(loadConfig().jevEnabled).toBe(true);
     expect(judgeEnabled()).toBe(true);
     write(true);
     expect(loadConfig().jevEnabled).toBe(true);
     expect(judgeEnabled()).toBe(true);
     write(false);
-    expect(loadConfig().jevEnabled).toBe(false);
-    expect(judgeEnabled()).toBe(false);
-    // A later `true` does not re-enable a process that was switched off: the launcher restarts the runtime instead.
+    expect(loadConfig().jevEnabled).toBe(true);
+    expect(judgeEnabled()).toBe(true);
     write(true);
+    loadConfig();
+    expect(judgeEnabled()).toBe(true);
+  } finally {
+    restore();
+  }
+  const restoreOffline = configureJudgeForTests({ enabled: false, apiKey: () => "test-key" });
+  try {
     loadConfig();
     expect(judgeEnabled()).toBe(false);
   } finally {
-    restore();
+    restoreOffline();
   }
 });
 
