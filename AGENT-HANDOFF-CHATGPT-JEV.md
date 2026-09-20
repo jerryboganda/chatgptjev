@@ -1,9 +1,9 @@
 # AGENT HANDOFF — ChatGPT Jev (Codex Web GPT fork + Jev judgment layer)
 
 **Handoff written:** 2026-09-20
-**Updated by:** GitHub Copilot after the required-Jev policy implementation and focused verification. Earlier release and parity evidence is retained as historical evidence.
+**Updated by:** GitHub Copilot after the Windows test-portability repairs and focused verification. Earlier release and parity evidence is retained as historical evidence.
 **For:** any incoming AI agent picking up this project
-**Status:** SOURCE UPDATE, NOT INSTALLED. Branch `chatgpt-jev`, HEAD `682c2d6`, with uncommitted required-Jev changes. Focused checks, live wrapper smoke, typechecks, and renderer build pass; verification limits are in section 8. The existing installer and installed fork predate this policy. No real-profile setup or Codex route takeover was performed. Read this document and `AGENTS.md` before making changes.
+**Status:** VERIFIED TEST-ONLY UPDATE. Branch `chatgpt-jev`, HEAD `782db0b`, published to `github/chatgpt-jev` and already packaged and installed with required Jev. The current uncommitted changes repair two Windows test fixtures; runtime and launcher implementation are unchanged. Retained compaction passes 36/36, runtime host passes 47/47, and core typecheck passes. No real-profile setup or Codex route takeover was performed. Read this document and `AGENTS.md` before making changes.
 
 ---
 
@@ -11,21 +11,21 @@
 
 | Item | State |
 |---|---|
-| Source repo | `d:\Projects\chatgpt-jev`, branch `chatgpt-jev`, HEAD `682c2d6` plus uncommitted required-Jev changes |
+| Source repo | `d:\Projects\chatgpt-jev`, branch `chatgpt-jev`, HEAD `782db0b` plus uncommitted Windows test-portability fixes |
 | Base | upstream `miuuyy/codex-chatgpt-web` tag **v5.0.8** = commit `00aab23` (MIT). `origin` still points at upstream — **never push** |
 | Rebrand | ✅ commit `9705851` — product "ChatGPT Jev", own appId/GUID/home dir/port/pipe/connector names; auto-updates disabled |
 | Jev policy | Required at suitable semantic decisions; explicit failure instead of silent heuristic substitution. Item 7 remains unnecessary because exact liveness stays in code. |
 | Config/CLI/UI | Legacy `jevEnabled:false` normalizes to true with a warning; `--no-jev` is rejected; launcher row is required status, not a toggle. |
-| Windows installer | Historical `launcher/artifacts/chatgpt-jev-5.0.8-win-x64.exe` (153,492,418 bytes, built 2026-09-20 10:08); NOT rebuilt for this source update |
-| Installed fork | Historical `%LOCALAPPDATA%\Programs\ChatGPT Jev\ChatGPT Jev.exe` (7518 files), GUID `a10be615-f3b8-4a54-9f50-2c5fd912e945`; NOT updated in this task |
+| Windows installer | `launcher/artifacts/chatgpt-jev-5.0.8-win-x64.exe` (153,492,736 bytes, built 2026-09-20 23:28) from `782db0b`; no rebuild for the test-only fixes |
+| Installed fork | Required-Jev build `782db0b`, runtime version `5.0.8`, at `%LOCALAPPDATA%\Programs\ChatGPT Jev\ChatGPT Jev.exe`; own GUID `a10be615-f3b8-4a54-9f50-2c5fd912e945` |
 | Codex Web GPT untouched | ✅ verified byte-count/newest-file unchanged: 6081 files / 554,415,894 bytes / newest 2026-09-19 19:39:19; GUID `d1a6026a-6210-588e-9a2b-da3936f94e02` |
-| Current verification | 84 judgment tests and 85 non-excluded harness tests pass; further focused integration/UI checks and known gaps are listed in section 8. |
-| Packaged smoke | Historical `PACKAGED_LAUNCHER_SMOKE_OK win32/x64`; not evidence for the required-Jev source update |
+| Current verification | Fresh: 36 retained-compaction tests, 47 runtime-host tests, and core typecheck pass; no filtered or skipped cases in either file. Prior policy checks and remaining limits are in section 8. |
+| Packaged smoke | `PACKAGED_LAUNCHER_SMOKE_OK win32/x64` for installed required-Jev commit `782db0b`; no installation during the test-only follow-up |
 | Parity proof | ✅ installed Codex Web GPT == fresh build of untouched v5.0.8: runtime 5997/5997, Electron shell 24/24, renderer 5/5 SHA-256 identical (§9) |
 | Setup in real profile | ⬜ NOT RUN (would take Codex's `openai_base_url` from the running Codex Web GPT — owner must choose, §10) |
 
 **Two most important facts:**
-1. The owner's installed "Codex Web GPT" **is** the open-source upstream product; the fork was cloned from that exact release. The current fork source requires Jev at semantic judgment sites. Missing, failed, or uncertain required decisions stop explicitly; exact facts, authorization, and schemas remain deterministic. The older installed fork still has the previous optional policy until separately rebuilt and installed.
+1. The owner's installed "Codex Web GPT" **is** the open-source upstream product; the fork was cloned from that exact release. The current fork source and installed `782db0b` build require Jev at semantic judgment sites. Missing, failed, or uncertain required decisions stop explicitly; exact facts, authorization, and schemas remain deterministic.
 2. **Do not intermix the two projects.** Never edit anything under `%LOCALAPPDATA%\Programs\Codex Web GPT` or `~/.codex-chatgpt-web`. Never kill `bun.exe` processes whose path is under `~\.codex-chatgpt-web\versions\...\runtime\` — they are the running Codex Web GPT app.
 
 ---
@@ -35,7 +35,7 @@
 1. "PLEASE USING **JEV** MAXIMALLY … SCAN THE ENTIRE PROJECT AND GIVE ME A LIST OF ALL OPTIMIZATIONS" → audit produced 20 items; owner chose **"Full — all 20 items in priority order"**.
 2. "YES RUN EVERYWHERE WILL FULL POWER AND 100% RESULTS" → Jev is used in **all** modes, **including Zero Risk mode**.
 3. "OPTION 1 BUT **DONT MERGE IT WITH THE CURRENT PROJECT** -- CREATE A TOTALLY DIFFERENT PROJECT … **NAME IT CHATGPT JEV** … **DONT INTERMIX BOTH PROJECTS**" → separate folder, separate product identity, separate install dir, separate state dir, separate port, separate connector names.
-4. "Local clone only (no GitHub account needed)" → no GitHub fork; no remote of our own; commits are local.
+4. Original decision: "Local clone only (no GitHub account needed)". Subsequently the owner authorized publication to `https://github.com/jerryboganda/chatgptjev`; remote `github` now hosts `chatgpt-jev` at `782db0b`. `origin` remains read-only upstream.
 5. Install **side-by-side**, leaving the installed Codex Web GPT untouched and running.
 6. Priority order used for implementation: 1+2 → 3+4 → 8+9+10 → 15 → 6+7 → rest.
 7. Latest request: `please remove all of the original developers restrictions --- use " jev " ai model for everything literally you do ---- DONT BYPASS IT OR FORGET TO USE IT OK ---- USE IT FOR ALL POSSIBLE TASKS OK ?????????`; selected scope: **"Both: app and coding workflow."**
@@ -103,7 +103,7 @@ Shared constraint: **only one wrapper can own Codex's `openai_base_url` / `model
 | `0d310c9` | Build: bundle Apache-2.0 notice for `@ai-sdk/provider-utils` (tarball has no LICENSE) |
 | `3f1130f` | Build: drop `.gitkeep`/`.DS_Store` from runtime manifest (electron-builder strips them) |
 
-`682c2d6` added this handoff after the initial release. The required-Jev changes described here remain uncommitted. Do not commit or create branches without the owner's request.
+`682c2d6` added this handoff after the initial release. `782db0b` committed the required-Jev policy, was published to `github/chatgpt-jev`, and was packaged and installed with owner authorization. The Windows test-portability follow-up remains uncommitted. Do not commit or create branches without the owner's request.
 
 Historical initial-release diff vs upstream: 138 files, +4836/−936, **0 upstream files deleted**. Rebrand step alone: 104 files +857/−816 (string renames). Jev step: 59 files +3980/−121 (12 new judgment modules + 12 new test files + wiring).
 
@@ -162,7 +162,7 @@ Tests added (all under `tests/`): `judge`, `adapter-failure-judge`, `ui-judgment
 
 ## 7. BUILD & INSTALL PIPELINE
 
-These commands describe a separate release operation. The current required-Jev source was not packaged or installed in this task. In particular, `smoke:package` silently reinstalls the fork; it is not a read-only test. Confirm release authorization before running it and preserve the original app and real Codex route.
+These commands describe a separate release operation. Required-Jev commit `782db0b` was packaged and installed successfully; the test-only follow-up did not rebuild or reinstall it. In particular, `smoke:package` silently reinstalls the fork; it is not a read-only test. Confirm release authorization before running it and preserve the original app and real Codex route.
 
 From `d:\Projects\chatgpt-jev\launcher` with Bun on PATH:
 1. `bun run package:win` → `bun run build` (tsc + vite) → `bun run build:runtime` (`scripts/prepare-runtime.cjs` → root `scripts/build-runtime-bundle.ts`) → `scripts/package.cjs --win` (electron-builder NSIS, per-user). Output: `launcher/artifacts/chatgpt-jev-5.0.8-win-x64.exe`.
@@ -181,16 +181,18 @@ Historical installed-build checks: `"%LOCALAPPDATA%\Programs\ChatGPT Jev\resourc
 
 ### 8.1 Required-Jev source update (current)
 
+Windows follow-up: `bun test tests/retained-compaction.test.ts --timeout 5000` in an externally capped child passes **36/36** (182 assertions, 6.42 seconds); `node --test launcher/tests/runtime-host.test.cjs` passes **47/47**; core `typecheck` passes. Neither test file filters or skips cases. The changes affect tests only, not production behavior. The remaining policy evidence below was collected before this follow-up unless explicitly updated.
+
 - Core and launcher typechecks pass. Launcher renderer build passes (436 modules); no dependencies were added.
 - Twelve judgment suites: **84 pass, 0 fail**, each run in its own externally capped Bun process.
 - `chatgpt-web-harness`: **85 pass, 0 fail, 1 filtered** with `^(?!.*revoking a turn rejects pending invocations)`. The excluded named-pipe case has a previously recorded upstream Windows/Bun hang; it is not a current pass.
 - Further focused checks: Zero Risk adapter 11/11; server compaction 19/19; server lifecycle 38/38; bridge collaboration 4/4; bridge platform 2/2; runtime layout/config 19/19; Zero Risk MCP lifecycle 6/6; helper IPC 7/7; MCP observation/deadline 3/3; retained-summary paths 6/6; browser required-Jev call-site contract 1/1; CLI rejection slice 1/1.
-- Launcher supervisor: **61 pass**. Runtime host: **46 pass, 1 fail**; the failure is the pre-existing Windows symlink `EPERM` case for rollback of a failed update. Do not claim the full launcher suite passes.
-- Retained-compaction suite: its first four low-level tests passed, then the externally capped run stalled at "active compaction delivers the current result and converts every later MCP call into the checkpoint request". That case also stalled alone at 45 seconds. Its cause was NOT proven to match the historical Bun wedge; it remains unverified. The directly affected retained/fresh summary paths passed separately.
+- Launcher supervisor: prior **61 pass**. Runtime host: fresh **47 pass, 0 fail, 0 skipped**. The rollback fixture failed before executing production code because unprivileged Windows cannot create a file symlink. It now uses a real directory junction on Windows and retains the file symlink elsewhere; restored target contents, link identity, and modes remain asserted. Privileged Windows file-symlink behavior was not tested.
+- Retained-compaction suite: fresh **36 pass, 0 fail**. Two pending named-pipe response assertions hung inside Bun 1.4.0's `.resolves.toMatchObject` even after response data and socket closure arrived. Replacing three expressions with `expect(await promise).toMatchObject` preserves every value assertion and unblocks the complete file. Temporary broker traces were removed; production transport is unchanged. This does not establish the cause of every historical Bun hang.
 - Live shared-wrapper smoke: a real `typesafe-ai/jev` answer selected `explicitLimits` with probability 1; the identical call logged `cached`; removing the key produced `jev_decision_required`/503 without a fallback. Earlier live consultations informed the required policy and review repairs. An initial smoke request used incorrect SDK field names and failed explicitly; it was corrected, not counted as a successful judgment.
 - Browser QA used a mocked Electron API in a fresh Playwright Chromium profile. Required and key-missing rows passed at **1365x940** and **390x844**: no toggle/key input, no text overflow, no uncaught page errors, screenshots inspected. The temporary Vite preview has an existing meta-CSP warning and a favicon 404. This is not authenticated ChatGPT or packaged Electron validation.
 - Seven independent-review issues were repaired and covered by focused checks: swallowed browser judgment errors; structured numeric/key privacy; ordinary compaction bypass; cumulative MCP deadline; URL credential evidence; helper IPC metadata; Doctor failure reporting. Error/cancellation paths and explicit offline fixtures were validated alongside success paths.
-- No current installer/package smoke, real authenticated ChatGPT turn, original-app modifications, route takeover, commit, or push occurred.
+- Required-Jev commit `782db0b` was subsequently published, packaged, installed, and passed packaged smoke. No new commit, push, installer, installation, real authenticated ChatGPT turn, original-app modification, or route takeover occurred during the test-only follow-up. Live Jev selected the junction and explicit-await probes with probability 1 and accepted the final scoped diff with probability 0.99; automated tests used offline fixtures.
 
 ### 8.2 Initial release (historical, not the current source)
 
@@ -214,13 +216,13 @@ Conclusion: installed Codex Web GPT is a verbatim upstream v5.0.8 build; ChatGPT
 
 ## 10. NOT DONE / OPEN DECISIONS FOR THE OWNER
 
-The required-Jev source update is uncommitted and not present in the old installer or installed fork. Packaging, fork installation, packaged smoke, and an authenticated end-to-end turn remain separate release work. The retained broker timeout and Windows symlink limitation remain as described in section 8.
+The required-Jev source update is committed, published, packaged, and installed at `782db0b`. The retained-compaction matcher hang and runtime-host fixture `EPERM` are resolved in the uncommitted test-only follow-up described in section 8. An authenticated end-to-end turn remains unverified; other historical suite gaps were not rerun in this follow-up.
 
 1. **`chatgpt-jev setup` has not been run in the owner's real profile.** Doing so with `--replace-codex-route` takes Codex's `openai_base_url`/`model_provider` away from the running Codex Web GPT (only one owner). Owner must decide which app owns the route. `route status` / `doctor` will name the owner (item 20). To try Jev without touching Codex: run the launcher/daemon with an isolated `CHATGPT_JEV_HOME` and `CODEX_HOME`.
 2. Item 7 skipped (redundant) — re-open only if the owner wants a Jev hook on the bridge stall budget despite heartbeat liveness.
 3. Docs/README/CHANGELOG still say codex-chatgpt-web; rebrand them only if asked.
 4. No macOS/Linux packaging attempted (`package:mac`/`package:linux` untested for the fork).
-5. `origin` = `https://github.com/miuuyy/codex-chatgpt-web.git` (upstream, read-only for us). Owner wanted local-only; if a remote is ever wanted, add a **new** remote — do not push to `origin`.
+5. `origin` = `https://github.com/miuuyy/codex-chatgpt-web.git` (upstream, read-only for us). The owner's publication remote is `github` = `https://github.com/jerryboganda/chatgptjev.git`. Do not push to `origin`.
 
 ---
 
@@ -250,7 +252,7 @@ Gotchas learned (all verified this session):
 - `powershell -File runner.ps1 -Files a,b` passes ONE string; call the script with `& … -Files @('a','b')`.
 - `Start-Process -ArgumentList` entries containing spaces need embedded double quotes.
 - Launcher spec reporter prints non-ASCII glyphs → redirect `*> file` then filter; core uses `^\(fail\)|^\d+ pass`.
-- Bun 1.4.0 on Windows intermittently wedges (event loop frozen, 0 CPU, timeouts never fire) in named-pipe TurnBroker tests — reproduced on untouched upstream, not Jev. Never run `bun test` inline without a cap.
+- Bun 1.4.0 on Windows can freeze in `.resolves` matchers on pending named-pipe promises. Prefer awaiting the promise before asserting its value; this fixed the retained-compaction file. Other historical hangs remain unclassified. Keep externally capped Bun test processes.
 - `git stash pop` fails ("already exists") when an untracked file replaced a tracked one — check `git stash list`, drop manually.
 - Windows 8.3 short paths (`DRFAIS~1`) break `.Substring(path.Length)` relative-path math — resolve with `(Get-Item $dir).FullName` first.
 - `Join-String` does not exist in Windows PowerShell 5.1 — use `-join`.

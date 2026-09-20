@@ -1055,6 +1055,7 @@ test("failed launcher update restores every mutable setup file before restarting
   const codexConfigPath = path.join(codexHome, "config.toml");
   const sharedDirectory = path.join(root, "shared");
   const sharedConfigPath = path.join(sharedDirectory, "config.toml");
+  const configLinkPath = process.platform === "win32" ? codexHome : codexConfigPath;
   const codexModelsCachePath = path.join(codexHome, "models_cache.json");
   const oldConfig = {
     mode: "full",
@@ -1066,6 +1067,8 @@ test("failed launcher update restores every mutable setup file before restarting
       profileName: "custom",
     },
   };
+  fs.mkdirSync(sharedDirectory, { mode: 0o750 });
+  if (process.platform === "win32") fs.symlinkSync(sharedDirectory, codexHome, "junction");
   for (const file of [configPath, journalPath, recoveryJournalPath, keyPath, profilePath, codexConfigPath, codexModelsCachePath]) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
   }
@@ -1074,11 +1077,10 @@ test("failed launcher update restores every mutable setup file before restarting
   fs.writeFileSync(recoveryJournalPath, "old recovery journal\n", { mode: 0o600 });
   fs.writeFileSync(keyPath, "old key\n", { mode: 0o600 });
   fs.writeFileSync(profilePath, "old profile\n", { mode: 0o600 });
-  fs.mkdirSync(sharedDirectory, { mode: 0o750 });
   fs.writeFileSync(sharedConfigPath, "old codex config\n", { mode: 0o640 });
-  fs.symlinkSync(sharedConfigPath, codexConfigPath);
-  const linkTarget = fs.readlinkSync(codexConfigPath);
-  const linkInode = fs.lstatSync(codexConfigPath).ino;
+  if (process.platform !== "win32") fs.symlinkSync(sharedConfigPath, codexConfigPath);
+  const linkTarget = fs.readlinkSync(configLinkPath);
+  const linkInode = fs.lstatSync(configLinkPath).ino;
   const directoryMode = fs.statSync(sharedDirectory).mode & 0o777;
   const fileMode = fs.statSync(sharedConfigPath).mode & 0o777;
   fs.writeFileSync(codexModelsCachePath, "old codex models cache\n", { mode: 0o600 });
@@ -1131,9 +1133,10 @@ test("failed launcher update restores every mutable setup file before restarting
     assert.equal(fs.readFileSync(keyPath, "utf8"), "old key\n");
     assert.equal(fs.readFileSync(profilePath, "utf8"), "old profile\n");
     assert.equal(fs.readFileSync(codexConfigPath, "utf8"), "old codex config\n");
-    assert.equal(fs.lstatSync(codexConfigPath).isSymbolicLink(), true);
-    assert.equal(fs.lstatSync(codexConfigPath).ino, linkInode);
-    assert.equal(fs.readlinkSync(codexConfigPath), linkTarget);
+    assert.equal(fs.readFileSync(sharedConfigPath, "utf8"), "old codex config\n");
+    assert.equal(fs.lstatSync(configLinkPath).isSymbolicLink(), true);
+    assert.equal(fs.lstatSync(configLinkPath).ino, linkInode);
+    assert.equal(fs.readlinkSync(configLinkPath), linkTarget);
     assert.equal(fs.statSync(sharedDirectory).mode & 0o777, directoryMode);
     assert.equal(fs.statSync(sharedConfigPath).mode & 0o777, fileMode);
     assert.equal(fs.readFileSync(codexModelsCachePath, "utf8"), "old codex models cache\n");
