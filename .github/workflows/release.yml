@@ -3,12 +3,40 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  repository_dispatch:
+    types: [release-tag]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  build-ref:
+    # Resolves what to check out. The auto-release workflow versions and tags a
+    # release with the GITHUB_TOKEN; GitHub never triggers workflows from events
+    # created by that token, so the tag arrival is delivered here as a
+    # repository_dispatch carrying the tag and its SHA.
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.resolve.outputs.ref }}
+      created: ${{ steps.resolve.outputs.created }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: resolve
+        env:
+          TAG: ${{ github.event.client_payload.tag }}
+        run: |
+          if [ -n "$TAG" ]; then
+            echo "ref=refs/tags/$TAG" >> "$GITHUB_OUTPUT"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=" >> "$GITHUB_OUTPUT"
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: build-ref
+    if: ${{ github.event_name != 'repository_dispatch' || needs.build-ref.outputs.created == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -24,6 +52,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.build-ref.outputs.ref || github.ref }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
@@ -86,10 +116,13 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [build-ref, build]
+    if: ${{ github.event_name != 'repository_dispatch' || needs.build-ref.outputs.created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.build-ref.outputs.ref || github.ref }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
@@ -102,9 +135,11 @@ jobs:
           path: release-assets
           merge-multiple: true
       - name: Verify release tag matches package version
+        env:
+          RELEASE_TAG: ${{ needs.build-ref.outputs.ref != '' && needs.build-ref.outputs.ref || github.ref_name }}
         run: |
           expected="v$(jq -r .version package.json)"
-          test "$GITHUB_REF_NAME" = "$expected"
+          test "${RELEASE_TAG#refs/tags/}" = "$expected"
       - name: Add licenses and installers
         run: |
           cp LICENSE release-assets/LICENSE

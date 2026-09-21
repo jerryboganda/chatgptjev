@@ -5,9 +5,12 @@ name: Auto release
 # current version is read from package.json; if its tag does not exist yet,
 # this workflow bumps the patch version across the synchronized files (the
 # exact set scripts/check-version.ts enforces), commits, tags, and pushes —
-# which triggers release.yml to build, verify, and publish. A commit message
-# containing [skip-release] never releases, and the release commit itself
-# carries that marker so bumping does not loop.
+# then launches the Release workflow **directly** with a repository-dispatch.
+# A direct dispatch is required because GitHub never triggers workflows from
+# events created by the GITHUB_TOKEN (a tag push by the bot would leave the
+# release pipeline untriggered). A commit message containing [skip-release]
+# never releases, and the release commit itself carries that marker so
+# bumping does not loop.
 
 on:
   push:
@@ -125,3 +128,18 @@ jobs:
           fi
           git tag "${{ steps.versions.outputs.tag }}"
           git push origin "HEAD:main" "${{ steps.versions.outputs.tag }}"
+
+      - name: Launch the Release workflow for the new tag
+        if: steps.decide.outputs.skipped != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.versions.outputs.tag }}
+        run: |
+          # The tag points at the release commit created by the previous step;
+          # dispatch its SHA so the Release workflow builds exactly that tree.
+          release_sha="$(git rev-parse "${TAG}^{}" 2>/dev/null || git rev-parse HEAD)"
+          gh api repos/"$GITHUB_REPOSITORY"/dispatches \
+            -f event_type=release-tag \
+            -f "client_payload[tag]=$TAG" \
+            -f "client_payload[sha]=$release_sha"
+          echo "Dispatched Release for $TAG at $release_sha"
