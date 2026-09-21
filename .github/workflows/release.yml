@@ -39,6 +39,7 @@ jobs:
         env:
           TAG: ${{ github.event.client_payload.tag || inputs.tag }}
         run: |
+          { echo "tag=$TAG" >> "$GITHUB_OUTPUT"; }
           if [ -n "$TAG" ]; then
             echo "ref=refs/tags/$TAG" >> "$GITHUB_OUTPUT"
             echo "created=true" >> "$GITHUB_OUTPUT"
@@ -201,31 +202,35 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build-ref.outputs.tag }}
         run: |
           mapfile -d '' release_files < <(find release-assets -type f -print0)
+          RELEASE_NAME="${GITHUB_REF_NAME}"
+          if [ -n "$TAG" ]; then RELEASE_NAME="$TAG"; fi
+          echo "Publishing release $RELEASE_NAME"
           test "${#release_files[@]}" -gt 0
           release_flags=(--latest)
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+          if [[ "$RELEASE_NAME" == *-* ]]; then
             release_flags=(--prerelease --latest=false)
           fi
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${release_files[@]}" \
+          if gh release view "$RELEASE_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_NAME" "${release_files[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
-            gh release edit "$GITHUB_REF_NAME" \
+            gh release edit "$RELEASE_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --draft=false \
               "${release_flags[@]}"
           else
-            gh release create "$GITHUB_REF_NAME" "${release_files[@]}" \
+            gh release create "$RELEASE_NAME" "${release_files[@]}" \
               --repo "$GITHUB_REPOSITORY" \
-              --title "$GITHUB_REF_NAME" \
+              --title "$RELEASE_NAME" \
               "${release_flags[@]}" \
               --generate-notes
           fi
 
           published_manifest="$(mktemp)"
-          gh release view "$GITHUB_REF_NAME" \
+          gh release view "$RELEASE_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --json assets \
             --jq '.assets[] | select(.name != "checksums.txt") | [.name, .digest] | @tsv' \
@@ -239,7 +244,7 @@ jobs:
             | LC_ALL=C sort -k2 > "$published_manifest"
           test -s "$published_manifest"
           mv "$published_manifest" release-assets/checksums.txt
-          gh release upload "$GITHUB_REF_NAME" release-assets/checksums.txt \
+          gh release upload "$RELEASE_NAME" release-assets/checksums.txt \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
 
@@ -250,13 +255,13 @@ jobs:
               echo "Published asset checksum mismatch: $name" >&2
               exit 1
             fi
-          done < <(gh release view "$GITHUB_REF_NAME" \
+          done < <(gh release view "$RELEASE_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --json assets \
             --jq '.assets[] | [.name, .digest] | @tsv')
 
           local_manifest_digest="$(sha256sum release-assets/checksums.txt | awk '{ print $1 }')"
-          remote_manifest_digest="$(gh release view "$GITHUB_REF_NAME" \
+          remote_manifest_digest="$(gh release view "$RELEASE_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --json assets \
             --jq '.assets[] | select(.name == "checksums.txt") | .digest')"
