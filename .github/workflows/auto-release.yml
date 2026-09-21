@@ -1,0 +1,127 @@
+name: Auto release
+
+# Every push to main ships a release, so the running launcher can auto-update
+# from this repository's releases without any manual publishing step. The
+# current version is read from package.json; if its tag does not exist yet,
+# this workflow bumps the patch version across the synchronized files (the
+# exact set scripts/check-version.ts enforces), commits, tags, and pushes —
+# which triggers release.yml to build, verify, and publish. A commit message
+# containing [skip-release] never releases, and the release commit itself
+# carries that marker so bumping does not loop.
+
+on:
+  push:
+    branches: [main]
+    tags-ignore: ["**"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tag-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.versions.outputs.tag }}
+      version: ${{ steps.versions.outputs.version }}
+      skipped: ${{ steps.decide.outputs.skipped }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Decide whether this push ships a release
+        id: decide
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          if printf '%s' "$COMMIT_MESSAGE" | grep -qiF '[skip-release]'; then
+            echo "Commit message contains [skip-release]; no release."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Read current version and resolve the next tag
+        id: versions
+        if: steps.decide.outputs.skipped != 'true'
+        run: |
+          version="$(jq -r .version package.json)"
+          test -n "$version" && test "$version" != "null"
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Tag $tag already exists; bumping the patch version."
+            minor="$(echo "$version" | cut -d. -f2)"
+            patch="$(echo "$version" | cut -d. -f3)"
+            version="$(echo "$version" | cut -d. -f1).$minor.$((patch + 1))"
+            tag="v$version"
+          fi
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Bump the synchronized version files
+        if: steps.decide.outputs.skipped != 'true'
+        run: |
+          python3 - "$GITHUB_WORKSPACE" "$VERSION" <<'PY'
+          import io, json, re, sys
+          root, new = sys.argv[1], sys.argv[2]
+          def patch(rel, fn):
+              path = f"{root}/{rel}"
+              with io.open(path, encoding="utf-8", newline="") as fh:
+                  text = fh.read()
+              updated = fn(text)
+              assert updated != text, f"{rel}: no substitution applied"
+              with io.open(path, "w", encoding="utf-8", newline="") as fh:
+                  fh.write(updated)
+          def bump(text, old):
+              assert old in text, f"expected {old!r} to be present"
+              return text.replace(old, new)
+          for manifest in ("package.json", "launcher/package.json"):
+              patch(manifest, lambda t, m=manifest: bump(t, json.load(io.open(f"{root}/{m}", encoding="utf-8"))["version"]))
+          patch("src/version.ts", lambda t: re.sub(
+              r'(export const VERSION = ")\d+\.\d+\.\d+(")', rf'\g<1>{new}\g<2>', t))
+          patch("scripts/install.sh", lambda t: re.sub(
+              r'(CODEX_CHATGPT_WEB_VERSION:-)\d+\.\d+\.\d+', rf'\g<1>{new}', t))
+          for readme in ("README.md", "README.zh-CN.md", "README.ja.md", "README.ko.md"):
+              with io.open(f"{root}/{readme}", encoding="utf-8", newline="") as fh:
+                  text = fh.read()
+              for tag_name in re.findall(r"releases/download/v\d+\.\d+\.\d+", text):
+                  old_tag = tag_name.split("/v")[-1]
+                  text = text.replace(f"/v{old_tag}/chatgpt-jev-{old_tag}-", f"/v{new}/chatgpt-jev-{new}-")
+              with io.open(f"{root}/{readme}", "w", encoding="utf-8", newline="") as fh:
+                  fh.write(text)
+          print(f"bumped to {new}")
+          PY
+        env:
+          VERSION: ${{ steps.versions.outputs.version }}
+
+      - name: Set up Bun for the version consistency gate
+        if: steps.decide.outputs.skipped != 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Run the version consistency gate
+        if: steps.decide.outputs.skipped != 'true'
+        run: bun run scripts/check-version.ts
+
+      - name: Commit and tag the release
+        if: steps.decide.outputs.skipped != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing to commit after the bump; tagging the current tree."
+          else
+            git commit -m "chore(release): ${{ steps.versions.outputs.tag }} [skip-release]"
+          fi
+          git tag "${{ steps.versions.outputs.tag }}"
+          git push origin "HEAD:main" "${{ steps.versions.outputs.tag }}"

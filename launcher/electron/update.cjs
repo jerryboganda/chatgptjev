@@ -6,8 +6,19 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { pipeline } = require("node:stream/promises");
 
-const REPOSITORY = "miuuyy/codex-chatgpt-web";
-const RELEASE_API_URL = `https://api.github.com/repos/${REPOSITORY}/releases/latest`;
+// Release channel: this fork publishes its own installers to its own repository.
+// The channel is overridable per-environment (CHATGPT_JEV_UPDATE_REPO="owner/name")
+// for staging a release elsewhere; validateReleaseAssetUrl still pins every download
+// to https://github.com/<this repo>/releases/download/v<version>/<asset>, so a wrong
+// repo can only fail a check — it can never make the updater install an artifact
+// from anywhere else.
+function releaseRepository() {
+  return process.env.CHATGPT_JEV_UPDATE_REPO?.trim() || "jerryboganda/chatgptjev";
+}
+
+function releaseApiUrl() {
+  return `https://api.github.com/repos/${releaseRepository()}/releases/latest`;
+}
 const USER_AGENT = "chatgpt-jev-launcher-updater";
 const MAX_REDIRECTS = 5;
 
@@ -64,7 +75,7 @@ function expectedChecksum(contents, assetName) {
 
 function validateReleaseAssetUrl(raw, version, assetName) {
   const url = new URL(raw);
-  const expectedPath = `/${REPOSITORY}/releases/download/v${version}/${assetName}`;
+  const expectedPath = `/${releaseRepository()}/releases/download/v${version}/${assetName}`;
   if (url.protocol !== "https:" || url.hostname !== "github.com" || url.pathname !== expectedPath) {
     throw new Error(`GitHub returned an unexpected release asset URL for ${assetName}`);
   }
@@ -207,7 +218,7 @@ function buildJob({ version, platform, executablePath, assetPath, stagingRoot, t
 
 function defaultDependencies() {
   return {
-    fetchRelease: async () => JSON.parse(await downloadText(RELEASE_API_URL)),
+    fetchRelease: async () => JSON.parse(await downloadText(releaseApiUrl())),
     downloadText,
     downloadFile,
     sha256,
@@ -382,7 +393,9 @@ module.exports = {
   expectedChecksum,
   macApplicationPath,
   parseVersion,
+  releaseApiUrl,
   releaseAssetName,
+  releaseRepository,
   releaseVersion,
   validateReleaseAssetUrl,
 };

@@ -10,7 +10,9 @@ const {
   createUpdateController,
   expectedChecksum,
   macApplicationPath,
+  releaseApiUrl,
   releaseAssetName,
+  releaseRepository,
   validateReleaseAssetUrl,
 } = require("../electron/update.cjs");
 
@@ -55,11 +57,11 @@ test("checksums and release URLs bind the exact expected asset", () => {
   assert.throws(() => expectedChecksum(`${hash}  other.zip\n`, "launcher.zip"), /no entry/);
   assert.equal(
     validateReleaseAssetUrl(
-      "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+      "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/launcher.zip",
       "1.2.0",
       "launcher.zip",
     ),
-    "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+    "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/launcher.zip",
   );
   assert.throws(
     () => validateReleaseAssetUrl("https://example.com/launcher.zip", "1.2.0", "launcher.zip"),
@@ -95,11 +97,11 @@ test("startup check runs once and exposes only a newer complete release", async 
           assets: [
             {
               name: "chatgpt-jev-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/chatgpt-jev-1.2.0-linux-x64.AppImage",
+              browser_download_url: "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/chatgpt-jev-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+              browser_download_url: "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/checksums.txt",
             },
           ],
         };
@@ -142,11 +144,11 @@ test("verified update is handed to one detached worker", async () => {
           assets: [
             {
               name: "chatgpt-jev-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/chatgpt-jev-1.2.0-linux-x64.AppImage",
+              browser_download_url: "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/chatgpt-jev-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+              browser_download_url: "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/checksums.txt",
             },
           ],
         }),
@@ -231,5 +233,53 @@ test("detached worker replaces an installed Linux AppImage and removes the old v
     assert.match(fs.readFileSync(logPath, "utf8"), /installed and relaunched/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release channel defaults to the fork repository and honors the environment override", () => {
+  const previous = process.env.CHATGPT_JEV_UPDATE_REPO;
+  delete process.env.CHATGPT_JEV_UPDATE_REPO;
+  try {
+    assert.equal(releaseRepository(), "jerryboganda/chatgptjev");
+    assert.equal(releaseApiUrl(), "https://api.github.com/repos/jerryboganda/chatgptjev/releases/latest");
+    process.env.CHATGPT_JEV_UPDATE_REPO = "staging-owner/chatgptjev-staging";
+    assert.equal(releaseRepository(), "staging-owner/chatgptjev-staging");
+    assert.equal(releaseApiUrl(), "https://api.github.com/repos/staging-owner/chatgptjev-staging/releases/latest");
+    assert.equal(
+      validateReleaseAssetUrl(
+        "https://github.com/staging-owner/chatgptjev-staging/releases/download/v1.2.0/launcher.zip",
+        "1.2.0",
+        "launcher.zip",
+      ),
+      "https://github.com/staging-owner/chatgptjev-staging/releases/download/v1.2.0/launcher.zip",
+    );
+    assert.throws(
+      () => validateReleaseAssetUrl(
+        "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+        "1.2.0",
+        "launcher.zip",
+      ),
+      /unexpected release asset URL/,
+    );
+    assert.throws(
+      () => validateReleaseAssetUrl("https://example.com/launcher.zip", "1.2.0", "launcher.zip"),
+      /unexpected release asset URL/,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.CHATGPT_JEV_UPDATE_REPO;
+    else process.env.CHATGPT_JEV_UPDATE_REPO = previous;
+  }
+});
+
+test("whitespace-padded or empty channel overrides fall back to the fork repository", () => {
+  const previous = process.env.CHATGPT_JEV_UPDATE_REPO;
+  try {
+    process.env.CHATGPT_JEV_UPDATE_REPO = "   ";
+    assert.equal(releaseRepository(), "jerryboganda/chatgptjev");
+    process.env.CHATGPT_JEV_UPDATE_REPO = "";
+    assert.equal(releaseRepository(), "jerryboganda/chatgptjev");
+  } finally {
+    if (previous === undefined) delete process.env.CHATGPT_JEV_UPDATE_REPO;
+    else process.env.CHATGPT_JEV_UPDATE_REPO = previous;
   }
 });

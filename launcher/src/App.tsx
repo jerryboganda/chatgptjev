@@ -1712,6 +1712,15 @@ function SettingsSurface({
               .catch((cause) => setError(messageOf(cause)))}
           />
         </SettingRow>
+        {!devProfile ? <SettingRow body={copy.autoUpdateBody} label={copy.autoUpdate}>
+          <Switch
+            checked={snapshot.state.autoUpdate}
+            disabled={snapshot.update.status === "disabled"}
+            onChange={(checked) => void api!.setAutoUpdate(checked)
+              .then(updateState)
+              .catch((cause) => setError(messageOf(cause)))}
+          />
+        </SettingRow> : null}
         <SettingRow
           body={snapshot.state.browserInteractionMode === "manual"
             ? copy.manualBiggerContextUnavailable

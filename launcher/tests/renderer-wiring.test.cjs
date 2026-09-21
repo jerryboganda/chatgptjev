@@ -389,3 +389,35 @@ test("catalog verification reports a failed request instead of requesting anothe
   assert.equal(state.codexRestartRequired, false);
   assert.ok(events.some(([event]) => event === "codex.model_catalog_verified"));
 });
+
+test("the launcher updates from its own release channel with auto-install armed", () => {
+  assert.match(electronMain, /updatesEnabled: true/);
+  assert.doesNotMatch(electronMain, /updatesEnabled: false/);
+  assert.match(electronMain, /maybeAutoInstallUpdate/);
+  assert.match(electronMain, /UPDATE_AUTOINSTALL_DELAY_MS/);
+  assert.match(electronMain, /UPDATE_RETRY_INTERVAL_MS/);
+});
+
+test("auto-install uses the guarded quit path and retries when a turn refuses to quit", () => {
+  const body = electronMain.match(/async function maybeAutoInstallUpdate\(\) \{[\s\S]*?\n\}/);
+  assert.ok(body, "maybeAutoInstallUpdate body not found");
+  assert.match(body[0], /updateController\.beginInstall\(\)/);
+  assert.match(body[0], /await requestQuit\(\)/);
+  assert.match(body[0], /updateController\.cancelInstall\(launch\)/);
+  assert.match(body[0], /scheduleAutoInstall\(UPDATE_RETRY_INTERVAL_MS\)/);
+  assert.match(body[0], /autoUpdateEnabled\(\)/);
+});
+
+test("the auto-update preference is exposed end to end", () => {
+  assert.match(preloadSource, /setAutoUpdate: \(enabled\) => ipcRenderer\.invoke\("launcher:set-auto-update", enabled\)/);
+  assert.match(electronMain, /handle\("launcher:set-auto-update"/);
+  assert.match(appSource, /api!\.setAutoUpdate\(checked\)/);
+  assert.match(appSource, /checked=\{snapshot\.state\.autoUpdate\}/);
+});
+
+test("auto-install is cancelled when the app quits and disarmed when the preference turns off", () => {
+  assert.match(electronMain, /app\.on\("will-quit", \(\) => \{\s*cancelUpdateAutoInstall\(\);/);
+  const handler = electronMain.match(/handle\("launcher:set-auto-update",[\s\S]*?\n  \}\);/);
+  assert.ok(handler, "set-auto-update handler not found");
+  assert.match(handler[0], /cancelUpdateAutoInstall\(\)/);
+});

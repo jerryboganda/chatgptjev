@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   setMcpStep: (step) => ipcRenderer.invoke("launcher:set-mcp-step", step),
   setAutostart: (enabled) => ipcRenderer.invoke("launcher:autostart", enabled),
   setBiggerContext: (enabled) => ipcRenderer.invoke("launcher:bigger-context", enabled),
+  setAutoUpdate: (enabled) => ipcRenderer.invoke("launcher:set-auto-update", enabled),
   setSkillAttachments: (enabled) => ipcRenderer.invoke("launcher:skill-attachments", enabled),
   jev: (enabled) => ipcRenderer.invoke("launcher:jev", enabled),
   setZeroRiskPro: (enabled) => ipcRenderer.invoke("launcher:zero-risk-pro", enabled),

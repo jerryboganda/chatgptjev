@@ -98,6 +98,55 @@ let lastOperation = null;
 let catalogVerificationTimer = null;
 let catalogVerificationInFlight = false;
 let updateController = null;
+let updateAutoInstallTimer = null;
+let launcherStateStore = null;
+
+const UPDATE_AUTOINSTALL_DELAY_MS = 5_000;
+const UPDATE_RETRY_INTERVAL_MS = 10 * 60_000;
+
+function autoUpdateEnabled() {
+  return launcherStateStore ? launcherStateStore.read().autoUpdate === true : false;
+}
+
+function cancelUpdateAutoInstall() {
+  if (updateAutoInstallTimer !== null) {
+    clearTimeout(updateAutoInstallTimer);
+    updateAutoInstallTimer = null;
+  }
+}
+
+function scheduleAutoInstall(delayMs) {
+  cancelUpdateAutoInstall();
+  updateAutoInstallTimer = setTimeout(() => {
+    updateAutoInstallTimer = null;
+    void maybeAutoInstallUpdate();
+  }, delayMs);
+}
+
+async function maybeAutoInstallUpdate() {
+  if (!updateController || !autoUpdateEnabled()) return;
+  const state = updateController.getState();
+  if (state.status !== "available" || !state.version) return;
+  try {
+    const launch = await updateController.beginInstall();
+    const result = await requestQuit();
+    if (!result.ok) {
+      updateController.cancelInstall(launch);
+      scheduleAutoInstall(UPDATE_RETRY_INTERVAL_MS);
+    }
+  } catch {
+    scheduleAutoInstall(UPDATE_RETRY_INTERVAL_MS);
+  }
+}
+
+function handleUpdateState(state) {
+  send("launcher:update-state", state);
+  if (state.status === "available" && autoUpdateEnabled()) {
+    scheduleAutoInstall(UPDATE_AUTOINSTALL_DELAY_MS);
+  } else {
+    cancelUpdateAutoInstall();
+  }
+}
 
 function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -829,6 +878,18 @@ function registerIpc({ logger, stateStore }) {
       ...autostart,
     };
   });
+  handle("launcher:set-auto-update", (_event, enabled) => {
+    const desired = enabled === true;
+    const state = stateStore.update({ autoUpdate: desired });
+    if (desired
+      && updateController?.getState().status === "available"
+      && updateAutoInstallTimer === null) {
+      scheduleAutoInstall(UPDATE_AUTOINSTALL_DELAY_MS);
+    } else if (!desired) {
+      cancelUpdateAutoInstall();
+    }
+    return state;
+  });
   handle("launcher:bigger-context", async (_event, enabled) => {
     const result = await runtimeHost.setBiggerContext(enabled === true);
     const state = stateStore.update({
@@ -1023,6 +1084,7 @@ async function start() {
   await app.whenReady();
 
   const stateStore = createStateStore(path.join(app.getPath("userData"), "launcher-state.json"));
+  launcherStateStore = stateStore;
   if (IS_DEV_PROFILE && !stateStore.read().onboardingComplete) {
     stateStore.update({
       language: stateStore.read().language || "en",
@@ -1119,14 +1181,15 @@ async function start() {
     platform: process.platform,
     arch: process.arch,
     packaged: app.isPackaged && !IS_DEV_PROFILE,
-    // ChatGPT Jev has no release channel; upstream installers would replace this fork.
-    updatesEnabled: false,
+    // Updates come from this fork's own release channel (see update.cjs REPOSITORY);
+    // the upstream repo never replaces this build.
+    updatesEnabled: true,
     executablePath: process.execPath,
     runtimeExecutable: updaterRuntimeRoot
       ? runtimeBundlePaths(updaterRuntimeRoot, process.platform).executable
       : null,
     logsDirectory: app.getPath("logs"),
-    publish: (state) => send("launcher:update-state", state),
+    publish: (state) => handleUpdateState(state),
     logger,
   });
   registerIpc({ logger, stateStore });
@@ -1347,6 +1410,9 @@ async function start() {
     if (exitCommitted) return;
     event.preventDefault();
     void requestQuit();
+  });
+  app.on("will-quit", () => {
+    cancelUpdateAutoInstall();
   });
   process.once("SIGINT", () => { void requestQuit(); });
   process.once("SIGTERM", () => { void requestQuit(); });

@@ -23,6 +23,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       xOpened: false,
       autoStart: true,
       keepRunningOnClose: true,
+      autoUpdate: true,
       showBrowserDuringTurns: true,
       browserInteractionMode: "automatic",
       experimentalBiggerContext: false,
@@ -50,6 +51,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       xOpened: false,
       autoStart: true,
       keepRunningOnClose: false,
+      autoUpdate: true,
       showBrowserDuringTurns: true,
       browserInteractionMode: "automatic",
       experimentalBiggerContext: false,
@@ -127,6 +129,7 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       xOpened: false,
       autoStart: true,
       keepRunningOnClose: true,
+      autoUpdate: true,
       showBrowserDuringTurns: true,
       browserInteractionMode: "automatic",
       experimentalBiggerContext: false,
@@ -180,4 +183,19 @@ test("session refresh reminders are deferred by exactly 48 hours", () => {
   assert.equal(SESSION_REFRESH_REMINDER_INTERVAL_MS, 48 * 60 * 60 * 1000);
   assert.equal(nextSessionRefreshReminderAt(now), "2026-08-07T12:00:00.000Z");
   assert.throws(() => nextSessionRefreshReminderAt(Number.NaN), /must be finite/);
+});
+
+test("auto-update preference persists and repairs like the other booleans", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-autoupdate-state-"));
+  const file = path.join(root, "state.json");
+  try {
+    const store = createStateStore(file);
+    assert.equal(store.read().autoUpdate, true);
+    store.update({ autoUpdate: false });
+    assert.equal(createStateStore(file).read().autoUpdate, false);
+    fs.writeFileSync(file, JSON.stringify({ version: 1, autoUpdate: "yes" }));
+    assert.equal(createStateStore(file).read().autoUpdate, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

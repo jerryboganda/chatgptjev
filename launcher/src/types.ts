@@ -13,6 +13,7 @@ export interface LauncherState {
   xOpened: boolean;
   autoStart: boolean;
   keepRunningOnClose: boolean;
+  autoUpdate: boolean;
   showBrowserDuringTurns: boolean;
   browserInteractionMode: BrowserInteractionMode;
   experimentalBiggerContext: boolean;
@@ -166,6 +167,7 @@ export interface LauncherApi {
   setMcpStep(step: number): Promise<LauncherState>;
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
+  setAutoUpdate(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
   /** Read required-Jev status; false rejects and true is a compatibility no-op. */
   jev(enabled?: boolean): Promise<JevStatus>;
