@@ -47,8 +47,6 @@ const symlinkSupport = (() => {
   }
 })();
 
-const symlinkSkip = symlinkSupport ? false : "this environment cannot create file symlinks";
-
 function nativeConfig(mode: "browser-only" | "full") {
   const config = defaultConfig(mode);
   config.subagentProtocol = "native";
@@ -79,7 +77,9 @@ afterEach(() => {
 });
 
 describe("reversible native Codex route integration", () => {
-  test("route install, update, switching and removal preserve a symlinked shared Codex config", { skip: symlinkSkip }, () => {
+  test("route install, update, switching and removal preserve a symlinked shared Codex config", () => {
+    // The early return is the one form `bun test` and `node --test` agree on for a host that
+    // cannot create file symlinks (Windows without Developer Mode or elevation).
     if (!symlinkSupport) return;
     const { root, codexHome } = fixture();
     const shared = join(root, "shared");
@@ -114,7 +114,7 @@ describe("reversible native Codex route integration", () => {
     expect(readFileSync(target, "utf8")).toBe(original);
   });
 
-  test("config compensation preserves the link and refuses redirected or invalid targets", { skip: symlinkSkip }, () => {
+  test("config compensation preserves the link and refuses redirected or invalid targets", () => {
     if (!symlinkSupport) return;
     const { root, codexHome } = fixture();
     const alias = join(codexHome, "config.toml");
