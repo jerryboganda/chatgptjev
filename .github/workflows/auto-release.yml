@@ -133,18 +133,11 @@ jobs:
           fi
           git tag "${{ steps.versions.outputs.tag }}"
           git push origin "HEAD:main" "${{ steps.versions.outputs.tag }}"
-
-      - name: Launch the Release workflow for the new tag
-        if: steps.decide.outputs.skipped != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.versions.outputs.tag }}
-        run: |
-          # The tag points at the release commit created by the previous step;
-          # dispatch its SHA so the Release workflow builds exactly that tree.
-          release_sha="$(git rev-parse "${TAG}^{}" 2>/dev/null || git rev-parse HEAD)"
-          gh api repos/"$GITHUB_REPOSITORY"/dispatches \
-            -f event_type=release-tag \
-            -f "client_payload[tag]=$TAG" \
-            -f "client_payload[sha]=$release_sha"
-          echo "Dispatched Release for $TAG at $release_sha"
+  release:
+    needs: tag-release
+    if: needs.tag-release.outputs.skipped != 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag-release.outputs.tag }}
+    permissions:
+      contents: write
