@@ -169,7 +169,9 @@ test("five active turns coexist and a sixth fails closed", () => {
 });
 
 test("settled replay sessions expire from their last use instead of their creation time", async () => {
-  const sessions = new ChatGptTurnSessions(50);
+  // A loaded runner can oversleep, so the window is much wider than the scheduling jitter:
+  // 50ms of use stays fresh while 500ms of silence expires inside the 400ms TTL.
+  const sessions = new ChatGptTurnSessions(400);
   let starts = 0;
   const start = () => {
     starts += 1;
@@ -184,9 +186,9 @@ test("settled replay sessions expire from their last use instead of their creati
   };
   const first = sessions.getOrCreate("replay", start);
   await first.browserOutcome;
-  await Bun.sleep(10);
+  await Bun.sleep(50);
   expect(sessions.getOrCreate("replay", start)).toBe(first);
-  await Bun.sleep(70);
+  await Bun.sleep(500);
   expect(sessions.getOrCreate("replay", start)).not.toBe(first);
   expect(starts).toBe(2);
   sessions.clear();
