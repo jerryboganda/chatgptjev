@@ -97,7 +97,9 @@ try {
     env.APPIMAGE_EXTRACT_AND_RUN = "1";
   } else if (process.platform === "win32") {
     const installer = artifact(/-win-x64\.exe$/, "Windows installer");
-    run(installer, ["/S", "/currentuser"], { timeout: 120_000 });
+    // The NSIS installer extracts a ~180 MB runtime; on cold CI runners the
+// extraction alone can exceed two minutes, so give it ten.
+    run(installer, ["/S", "/currentuser"], { timeout: 600_000 });
     executable = path.join(windowsInstallLocation(), `${launcherManifest.build.productName}.exe`);
     command = executable;
     args = ["--launcher-smoke-test"];
