@@ -72,6 +72,11 @@ jobs:
       - name: Bump the synchronized version files
         if: steps.decide.outputs.skipped != 'true'
         run: |
+          current="$(jq -r .version package.json)"
+          if [ "$current" = "$VERSION" ]; then
+            echo "package.json is already $VERSION; the tag is what is missing. Tagging without file changes."
+            exit 0
+          fi
           python3 - "$GITHUB_WORKSPACE" "$VERSION" <<'PY'
           import io, json, re, sys
           root, new = sys.argv[1], sys.argv[2]
