@@ -33,6 +33,7 @@ jobs:
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
       created: ${{ steps.resolve.outputs.created }}
+      tag: ${{ steps.resolve.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
       - id: resolve
