@@ -41,6 +41,18 @@ Full harness mode connects ChatGPT to the current task’s files, terminal, tool
 
 The app includes its browser and runtime. No separate Chrome, Node, or Bun installation is needed.
 
+## Updates
+
+The launcher updates itself from this repository's releases. When a new version is published,
+the app detects it at startup, verifies the installer's SHA-256 against the release's
+`checksums.txt`, installs it silently, and relaunches — no uninstall or manual reinstall,
+and turns in progress are never interrupted (auto-install retries while one is running).
+Automatic updates can be switched off in **Settings → Automatic updates**.
+
+Releases are produced automatically: every push to `main` versions, tags, builds, and
+publishes (see `.github/workflows/auto-release.yml` and `release.yml`). To ship a build
+without a release, include `[skip-release]` in the commit message.
+
 <details>
 <summary><strong>Terminal install, updates & repair</strong></summary>
 
