@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-jev-launcher",
-  "version": "5.0.9",
+  "version": "5.0.10",
   "private": true,
   "description": "Desktop control center for ChatGPT Jev (Jev-hardened fork of Codex ChatGPT Web)",
   "author": "miuuyy",
