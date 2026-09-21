@@ -32,6 +32,23 @@ import {
 
 const roots: string[] = [];
 
+/** Windows refuses file symlinks without Developer Mode or elevation; these fixtures need real links. */
+const symlinkSupport = (() => {
+  const probeRoot = join(tmpdir(), `chatgpt-jev-symlink-probe-${process.pid}`);
+  try {
+    mkdirSync(probeRoot, { recursive: true });
+    writeFileSync(join(probeRoot, "target.toml"), "probe\n");
+    symlinkSync(join(probeRoot, "target.toml"), join(probeRoot, "link.toml"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probeRoot, { recursive: true, force: true });
+  }
+})();
+
+const symlinkSkip = symlinkSupport ? false : "this environment cannot create file symlinks";
+
 function nativeConfig(mode: "browser-only" | "full") {
   const config = defaultConfig(mode);
   config.subagentProtocol = "native";
@@ -62,7 +79,8 @@ afterEach(() => {
 });
 
 describe("reversible native Codex route integration", () => {
-  test("route install, update, switching and removal preserve a symlinked shared Codex config", () => {
+  test("route install, update, switching and removal preserve a symlinked shared Codex config", { skip: symlinkSkip }, () => {
+    if (!symlinkSupport) return;
     const { root, codexHome } = fixture();
     const shared = join(root, "shared");
     mkdirSync(shared, { mode: 0o750 });
@@ -96,7 +114,8 @@ describe("reversible native Codex route integration", () => {
     expect(readFileSync(target, "utf8")).toBe(original);
   });
 
-  test("config compensation preserves the link and refuses redirected or invalid targets", () => {
+  test("config compensation preserves the link and refuses redirected or invalid targets", { skip: symlinkSkip }, () => {
+    if (!symlinkSupport) return;
     const { root, codexHome } = fixture();
     const alias = join(codexHome, "config.toml");
     const target = join(root, "shared.toml");

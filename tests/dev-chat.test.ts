@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,8 +22,10 @@ import {
 } from "../src/dev-chat/session";
 import { startDevChatTransport } from "../src/dev-chat/transport";
 import type { CodexProviderConfig } from "../src/types";
+import { installJevFixture } from "./fixtures/jev";
 
 const roots: string[] = [];
+let restoreJev: (() => void) | undefined;
 
 function scratch(name: string): string {
   const root = mkdtempSync(join(tmpdir(), `${name}-`));
@@ -31,7 +33,11 @@ function scratch(name: string): string {
   return root;
 }
 
+beforeEach(() => { restoreJev = installJevFixture(); });
+
 afterEach(() => {
+  restoreJev?.();
+  restoreJev = undefined;
   chatGptTurnSessions.clear();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });

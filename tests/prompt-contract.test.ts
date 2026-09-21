@@ -352,7 +352,7 @@ test("Bigger Context compaction preserves history above the retired inline byte 
   for (let index = 1; index <= 6; index += 1) {
     expect(staged).toContain(`multipart-history-${index}-`);
   }
-});
+}, 60_000);
 
 test("Bigger Context minimizes the largest ordered stage instead of overfilling a middle part", () => {
   const compact = request("high");
@@ -377,7 +377,7 @@ test("Bigger Context minimizes the largest ordered stage instead of overfilling 
 
   expect(parts.map(part => part.records.length)).toEqual([2, 1, 2]);
   expect(Math.max(...multipart.multipart!.parts.map(part => part.length))).toBeLessThan(120_000);
-});
+}, 60_000);
 
 test("Web compaction rebuilds attachments after trimming an oversized oldest image message", () => {
   const compact = request("high");

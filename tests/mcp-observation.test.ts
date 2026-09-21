@@ -19,7 +19,9 @@ for (const [reviewPhase, cancelled] of [
     ? "caller cancellation retires the turn even with a Jev error reason"
     : "failure preserves the live MCP turn without releasing unreviewed output";
   test(`required ${reviewPhase} review ${behavior}`, async () => {
-    const socketPath = defaultBrokerEndpoint(join(tmpdir(), `jev-mcp-review-${reviewPhase}-${process.pid}-${Date.now()}`));
+    // macOS caps a Unix socket path at 103 bytes, and its per-user temp directory is long; the short
+    // POSIX base keeps every platform inside the kernel limit for this fixture.
+    const socketPath = defaultBrokerEndpoint(join(process.platform === "win32" ? tmpdir() : "/tmp", `jev-mcp-review-${reviewPhase}-${process.pid}-${Date.now()}`));
     const broker = TurnBroker.forSocket(socketPath);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const originalConnect = McpServer.prototype.connect;

@@ -2657,8 +2657,10 @@ export class ChatGptBrowserWorker {
         await externalProgress.acknowledgeToolBatch(progress.lastToolBatchRevision);
       }
       if (progress && progress.lastToolBatchRevision > initialToolBatchRevision) return "mcp_tool_call";
-      await throwIfChatGptSessionFailureAlert(page);
+      // Exact protocol dialogs stay authoritative: rule them out before the Jev-judged dialog path,
+      // whose verdict would otherwise replace the precise, already-known failure.
       await throwIfChatGptRateLimitDialog(page);
+      await throwIfChatGptSessionFailureAlert(page);
       // Until the new response is bound, last() can still be a historical failed answer.
       // Response errors are checked against the bound current turn in the observation loops.
       let evidence: ChatGptSubmissionEvidence | undefined;
@@ -2855,8 +2857,8 @@ export class ChatGptBrowserWorker {
       if (deadline !== undefined && Date.now() >= deadline) {
         throw new Error("ChatGPT web turn timed out");
       }
-      await throwIfChatGptSessionFailureAlert(observationPage);
       await throwIfChatGptRateLimitDialog(observationPage);
+      await throwIfChatGptSessionFailureAlert(observationPage);
       let state: ChatGptSubmissionDomState;
       try {
         state = await this.submissionDomState(
@@ -3390,8 +3392,8 @@ export class ChatGptBrowserWorker {
     for (;;) {
       if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       if (page.isClosed()) throw chatGptBrowserTabClosedError();
-      await throwIfChatGptSessionFailureAlert(page);
       await throwIfChatGptRateLimitDialog(page);
+      await throwIfChatGptSessionFailureAlert(page);
       if (await sendButton.isEnabled()) break;
       if (Date.now() >= sendEnableDeadline) {
         await captureDiagnostic?.("send-disabled");

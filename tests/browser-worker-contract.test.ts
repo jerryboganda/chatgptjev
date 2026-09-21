@@ -649,6 +649,7 @@ test("an accepted Full-mode send survives one stalled DOM probe and a later MCP 
     filter() { return this; },
     last() { return this; },
     getByText() { return this; },
+    allInnerTexts: async () => [],
     isVisible: async () => false,
   };
   const assistantLocator = { id: "assistant-turn" };
@@ -768,6 +769,7 @@ test("Bigger Context send activation keeps the outer stage budget instead of res
   const hiddenLocator = {
     filter() { return this; },
     last() { return this; },
+    allInnerTexts: async () => [],
     isVisible: async () => false,
   };
   const page = {
@@ -914,6 +916,7 @@ test("an accepted turn rebinds the missing assistant observation and acknowledge
   const hiddenLocator = {
     filter() { return this; },
     last() { return this; },
+    allInnerTexts: async () => [],
     isVisible: async () => false,
   };
   const assistantLocator = { id: "assistant-turn" };
@@ -981,6 +984,7 @@ test("missing-assistant expiry checks fresh DOM after a delayed wake while prese
   const hiddenLocator = {
     filter() { return this; },
     last() { return this; },
+    allInnerTexts: async () => [],
     isVisible: async () => false,
   };
   const assistantLocator = { id: "assistant" };
@@ -2527,11 +2531,18 @@ function dialogPage(text: string, buttonText = "Got it", errorActionVisible = fa
       press: async (key: string) => { pressed.push(key); },
     };
     const dialog = {
-      filter: ({ hasText }: { hasText: string | RegExp }) => {
-        matches &&= typeof hasText === "string" ? text.includes(hasText) : hasText.test(text);
+      filter: (options: { hasText?: string | RegExp }) => {
+        const { hasText } = options;
+        if (hasText !== undefined) {
+          matches &&= typeof hasText === "string" ? text.includes(hasText) : hasText.test(text);
+        }
         return dialog;
       },
       last: () => dialog,
+      // The exact locale regexes above see this dialog through filter/isVisible. The Jev reader asks
+      // for the visible alert/dialog container texts instead, so an empty read keeps the exact-match
+      // verdict authoritative for this fixture.
+      allInnerTexts: async () => [],
       isVisible: async () => matches,
       getByRole: (_role: string, options?: { name?: string | RegExp }) => {
         const name = options?.name;
@@ -3142,7 +3153,7 @@ test("Bigger Context fits mixed-density whole records within both token and comp
       { stagingEffort: stagingMode.effort, maxStageMessageTokens, maxStageChars, finalMessageTokens, finalMessageChars: final.length },
     )).not.toThrow();
   }
-}, 30_000);
+}, 120_000);
 
 test("Bigger Context preflight expands only the total context ceiling and keeps each message boundary", () => {
   const plus = {

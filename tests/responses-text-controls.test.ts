@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
@@ -7,6 +7,14 @@ import { createChatGptStructuredOutputValidator } from "../src/adapters/chatgpt-
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { parseRequest } from "../src/responses/parser";
 import type { AdapterEvent, CodexProviderConfig } from "../src/types";
+import { installJevFixture } from "./fixtures/jev";
+
+let restoreJev: (() => void) | undefined;
+beforeEach(() => { restoreJev = installJevFixture(); });
+afterEach(() => {
+  restoreJev?.();
+  restoreJev = undefined;
+});
 
 const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
 const turnToken = "turn_12345678901234567890123456789012";
