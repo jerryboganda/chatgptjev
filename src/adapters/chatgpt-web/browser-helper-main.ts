@@ -4,7 +4,7 @@ import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
 import { ChatGptBrowserWorker, closeChatGptBrowserWorkers, type BrowserTurn } from "./browser-worker";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
-import { JevDecisionError } from "../../lib/judge";
+import { JevDecisionError, onJudgeEvent } from "../../lib/judge";
 import type { ChatGptWebCapabilities } from "./model";
 import { createProcessLineWriter } from "./process-line-writer";
 import { createBrowserHelperPromptSelection } from "./browser-helper-prompt-selection";
@@ -88,6 +88,10 @@ const diagnostic = (...values: unknown[]): void => {
 console.info = diagnostic;
 console.warn = diagnostic;
 console.error = diagnostic;
+onJudgeEvent(event => {
+  if (event.outcome === "cached" || event.outcome === "disabled") return;
+  diagnostic(`[chatgpt-jev] jev ${event.site} ${event.outcome} ${Math.round(event.elapsedMs)}ms`, event.answers ?? event.error ?? "");
+});
 
 const abortControllers = new Map<string, AbortController>();
 const turnProgress = new Map<string, ChatGptMirroredTurnProgress>();

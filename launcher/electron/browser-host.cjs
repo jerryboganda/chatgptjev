@@ -24,7 +24,7 @@ const {
   shellZoomActionForInput,
 } = require("./browser-state.cjs");
 
-const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
+const CHATGPT_CHAT_URL = "https://chatgpt.com/";
 const CHATGPT_ORIGIN = "https://chatgpt.com";
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#chatgpt-jev-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
@@ -44,6 +44,8 @@ const TURN_HEARTBEAT_SWEEP_MS = 5_000;
 const TURN_HEARTBEAT_TIMEOUT_MS = 60_000;
 const TURN_TAB_BOOTSTRAP_TIMEOUT_MS = 120_000;
 const RETAINED_TURN_TAB_TTL_MS = 30 * 60 * 1000;
+const MAX_SAVED_CONVERSATIONS = 512;
+const SAVED_CONVERSATION_NAVIGATION_TIMEOUT_MS = 30_000;
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
 const CHATGPT_AUTH_SESSION_TIMEOUT_MS = 5_000;
 const WINDOW_VISIBILITY_EVENTS = ["show", "hide", "minimize", "restore"];
@@ -168,7 +170,7 @@ function isAbortedNavigationError(error) {
   return error instanceof Error && /\bERR_ABORTED\b/.test(error.message);
 }
 
-function isTemporaryChatUrl(value) {
+function isSavedChatUrl(value) {
   let parsed;
   try {
     parsed = new URL(value);
@@ -176,8 +178,32 @@ function isTemporaryChatUrl(value) {
     return false;
   }
   return parsed.origin === CHATGPT_ORIGIN
-    && parsed.pathname === "/"
-    && parsed.searchParams.get("temporary-chat") === "true";
+    && !parsed.username && !parsed.password && !parsed.hash
+    && (parsed.pathname === "/"
+      || /^\/c\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.pathname))
+    && !parsed.searchParams.has("temporary-chat");
+}
+
+function validSavedConversationCheckpoint(value) {
+  const messageId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!value || !isSavedChatUrl(value.url)) return false;
+  const url = new URL(value.url);
+  return url.pathname.startsWith("/c/") && !url.search
+    && /^[0-9a-f]{64}$/.test(value.accountHash)
+    && messageId.test(value.lastUserId)
+    && messageId.test(value.lastAssistantId);
+}
+
+async function savedConversationDeadline(operation, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("Saved ChatGPT conversation verification timed out")), timeoutMs);
+      }),
+    ]);
+  } finally { clearTimeout(timer); }
 }
 
 function isChatGptBackendUrl(value) {
@@ -527,6 +553,206 @@ class BrowserHost {
     return this.turnTabs.get(this.selectedTabId) || null;
   }
 
+  savedConversationIndexPath() {
+    return this.descriptorPath ? path.join(path.dirname(this.descriptorPath), "saved-conversations.json") : null;
+  }
+
+  readSavedConversations() {
+    const indexPath = this.savedConversationIndexPath();
+    if (!indexPath) return [];
+    let source;
+    try {
+      if (fs.statSync(indexPath).size > 1_048_576) throw new Error("Saved conversation index exceeds its size limit");
+      source = fs.readFileSync(indexPath, "utf8");
+    } catch (error) {
+      if (error?.code === "ENOENT") return [];
+      throw new Error("The saved ChatGPT conversation index could not be read", { cause: error });
+    }
+    const data = JSON.parse(source);
+    if (data?.version !== 1 || !Array.isArray(data.conversations)
+      || data.conversations.length > MAX_SAVED_CONVERSATIONS
+      || !data.conversations.every(record => validSavedConversationCheckpoint(record)
+        && /^[0-9a-f]{64}$/.test(record.conversationKey)
+        && ["production", "development"].includes(record.profile)
+        && (record.connectorIdentity === null
+          || (typeof record.connectorIdentity === "string" && record.connectorIdentity.length > 0 && record.connectorIdentity.length <= 128))
+        && typeof record.ready === "boolean"
+        && Number.isSafeInteger(record.updatedAt) && record.updatedAt > 0)) {
+      throw new Error("The saved ChatGPT conversation index is invalid; inspect it before retrying");
+    }
+    return data.conversations;
+  }
+
+  writeSavedConversations(conversations) {
+    const indexPath = this.savedConversationIndexPath();
+    if (!indexPath) return;
+    const bounded = conversations.sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, MAX_SAVED_CONVERSATIONS)
+      .map(({ conversationKey, connectorIdentity, profile, url, accountHash, lastUserId, lastAssistantId, updatedAt, ready }) => ({
+        conversationKey, connectorIdentity, profile, url, accountHash, lastUserId, lastAssistantId, updatedAt, ready,
+      }));
+    writePrivateFileAtomic(indexPath, `${JSON.stringify({ version: 1, conversations: bounded }, null, 2)}\n`);
+  }
+
+  findSavedConversation(conversationKey, connectorIdentity) {
+    if (!conversationKey || !this.descriptorPath) return undefined;
+    const conversations = this.readSavedConversations();
+    const matches = conversations.filter(record => record.conversationKey === conversationKey
+      && record.connectorIdentity === (connectorIdentity ?? null) && record.profile === this.profile);
+    if (matches.length > 1) throw new Error("The saved ChatGPT conversation index contains conflicting checkpoints");
+    return matches[0];
+  }
+
+  async readSavedConversationAccount(contents) {
+    requireAutomaticBrowserInspection(this, "Saved ChatGPT conversation verification");
+    if (!isSavedChatUrl(contents.getURL())) throw new Error("ChatGPT did not expose an owned saved-chat surface");
+    const response = await contents.session.fetch(`${CHATGPT_ORIGIN}/api/auth/session`, {
+      credentials: "include", cache: "no-store", headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(CHATGPT_AUTH_SESSION_TIMEOUT_MS),
+    });
+    if (!response.ok || response.url !== `${CHATGPT_ORIGIN}/api/auth/session`
+      || !response.headers.get("content-type")?.includes("application/json")) {
+      throw new Error("ChatGPT could not verify the saved conversation account");
+    }
+    const session = await response.json();
+    const accountId = session?.user?.id;
+    if (typeof accountId !== "string" || !accountId || accountId.length > 256
+      || (session.error !== undefined && session.error !== null && session.error !== "")
+      || (session.expires != null && (typeof session.expires !== "string"
+        || !Number.isFinite(Date.parse(session.expires)) || Date.parse(session.expires) <= Date.now()))) {
+      throw new Error("ChatGPT did not provide a current account identity for saved conversation recovery");
+    }
+    return createHash("sha256").update(accountId).digest("hex");
+  }
+
+  async readSavedConversationCheckpoint(contents, waitForHydration = false, accountHash) {
+    requireAutomaticBrowserInspection(this, "Saved ChatGPT conversation verification");
+    if (!isSavedChatUrl(contents.getURL()) || !new URL(contents.getURL()).pathname.startsWith("/c/")) {
+      throw new Error("ChatGPT did not expose a saved conversation URL");
+    }
+    accountHash ??= await this.readSavedConversationAccount(contents);
+    const deadline = Date.now() + (waitForHydration ? 15_000 : 0);
+    do {
+      const state = await savedConversationDeadline(contents.executeJavaScript(`(() => {
+        const messages = Array.from(document.querySelectorAll('[data-message-author-role][data-message-id]'));
+        const lastUser = messages.findLast(element => element.getAttribute('data-message-author-role') === 'user');
+        const lastAssistant = messages.findLast(element => element.getAttribute('data-message-author-role') === 'assistant');
+        return {
+          url: location.href,
+          composer: Boolean(${visibleElementScript(COMPOSER_SELECTOR)}),
+          running: Boolean(${visibleElementScript('[data-testid="stop-button"]')}),
+          lastRole: messages.at(-1)?.getAttribute('data-message-author-role'),
+          lastUserId: lastUser?.getAttribute('data-message-id'),
+          lastAssistantId: lastAssistant?.getAttribute('data-message-id'),
+        };
+      })()`, true), CHATGPT_AUTH_SESSION_TIMEOUT_MS);
+      const checkpoint = {
+        url: isSavedChatUrl(state.url) ? `${new URL(state.url).origin}${new URL(state.url).pathname}` : "",
+        accountHash,
+        lastUserId: state.lastUserId,
+        lastAssistantId: state.lastAssistantId,
+      };
+      if (state.composer && !state.running && state.lastRole === "assistant"
+        && validSavedConversationCheckpoint(checkpoint)) return checkpoint;
+      if (Date.now() >= deadline) break;
+      await sleep(100);
+    } while (!contents.isDestroyed());
+    throw new Error("ChatGPT did not expose a completed saved conversation checkpoint");
+  }
+
+  async rememberSavedConversation(tab) {
+    if (!this.descriptorPath || tab.interactionMode !== "automatic" || !tab.conversationKey) return;
+    const { traceId, helperPid } = tab;
+    const checkpoint = await this.readSavedConversationCheckpoint(tab.view.webContents);
+    if (this.turnTabs.get(tab.id) !== tab || tab.traceId !== traceId || tab.helperPid !== helperPid
+      || this.userCancelledTurnOwners.has(traceId)) throw new BrowserTurnCancelledError(traceId);
+    if (!validSavedConversationCheckpoint(checkpoint)) throw new Error("Saved ChatGPT checkpoint is invalid");
+    const conversations = this.readSavedConversations().filter(record => {
+      const matches = record.conversationKey === tab.conversationKey
+        && record.connectorIdentity === (tab.connectorIdentity ?? null) && record.profile === this.profile;
+      if (matches && record.accountHash !== checkpoint.accountHash) {
+        throw new Error("The completed ChatGPT conversation changed its saved account identity");
+      }
+      return !matches;
+    });
+    const saved = {
+      conversationKey: tab.conversationKey,
+      connectorIdentity: tab.connectorIdentity ?? null,
+      profile: this.profile,
+      ...checkpoint,
+      updatedAt: Date.now(),
+      ready: true,
+    };
+    tab.savedCheckpoint = saved;
+    conversations.push(saved);
+    this.writeSavedConversations(conversations);
+  }
+
+  async resumeSavedConversation(tab, saved, requireRetainedConversation, navigate) {
+    const { traceId, helperPid } = tab;
+    const assertOwned = () => {
+      if (this.turnTabs.get(tab.id) !== tab || tab.traceId !== traceId || tab.helperPid !== helperPid
+        || this.userCancelledTurnOwners.has(traceId)) throw new BrowserTurnCancelledError(traceId);
+    };
+    let accountVerified = false;
+    try {
+      assertOwned();
+      if (saved) {
+        const conversations = this.readSavedConversations().filter(record => record.conversationKey !== saved.conversationKey
+          || record.connectorIdentity !== saved.connectorIdentity || record.profile !== saved.profile);
+        this.writeSavedConversations([...conversations, { ...saved, ready: false }]);
+      }
+      if (navigate) {
+        await savedConversationDeadline(tab.view.webContents.loadURL(saved.ready ? saved.url : CHATGPT_CHAT_URL), SAVED_CONVERSATION_NAVIGATION_TIMEOUT_MS);
+      }
+      const accountHash = await this.readSavedConversationAccount(tab.view.webContents);
+      assertOwned();
+      if (!saved || accountHash !== saved.accountHash) throw new Error("The saved conversation belongs to a different ChatGPT account");
+      accountVerified = true;
+      if (!saved.ready) throw new Error("The previous ChatGPT turn did not finish with a verified checkpoint");
+      const checkpoint = await this.readSavedConversationCheckpoint(tab.view.webContents, navigate, accountHash);
+      assertOwned();
+      if (["url", "accountHash", "lastUserId", "lastAssistantId"].some(key => saved[key] !== checkpoint[key])) {
+        throw new Error("Saved ChatGPT conversation no longer matches its completed checkpoint");
+      }
+      if (navigate) await savedConversationDeadline(this.markTurnTabSurface(tab), CHATGPT_AUTH_SESSION_TIMEOUT_MS);
+      assertOwned();
+      this.logger.info("browser.saved_conversation_restored", { tabId: tab.id, traceId });
+      return true;
+    } catch (error) {
+      assertOwned();
+      if (!accountVerified) {
+        this.removeTurnTab(tab, false);
+        const unverified = new Error("The saved chat account could not be verified. Sign in to its original ChatGPT account and retry.", { cause: error });
+        unverified.code = "saved_conversation_account_unverified";
+        throw unverified;
+      }
+      if (requireRetainedConversation) {
+        this.removeTurnTab(tab, false);
+        const unavailable = new Error("The retained ChatGPT conversation is no longer available", { cause: error });
+        unavailable.code = "retained_conversation_unavailable";
+        throw unavailable;
+      }
+      this.logger.warn("browser.saved_conversation_rebuild", {
+        tabId: tab.id, traceId,
+        message: "Saved chat could not be verified; rebuilding from canonical Codex history",
+      });
+      tab.message = "Rebuilding from canonical Codex history";
+      tab.connectorBound = false;
+      if (tab.view.webContents.getURL() !== CHATGPT_CHAT_URL) {
+        try {
+          await savedConversationDeadline(tab.view.webContents.loadURL(CHATGPT_CHAT_URL), SAVED_CONVERSATION_NAVIGATION_TIMEOUT_MS);
+        } catch (navigationError) {
+          assertOwned();
+          this.removeTurnTab(tab, false);
+          throw navigationError;
+        }
+      }
+      assertOwned();
+      return false;
+    }
+  }
+
   async createTurnTab(traceId, helperPid, conversationKey, connectorIdentity) {
     if (this.turnTabs.size >= MAX_BROWSER_TABS
       && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
@@ -632,7 +858,7 @@ class BrowserHost {
       ordinal,
       label: `ChatGPT ${ordinal}`,
       pageTitle: "ChatGPT",
-      url: TEMPORARY_CHAT_URL,
+      url: CHATGPT_CHAT_URL,
       loading: true,
       message: "Paste the copied prompt, add any images yourself because Zero Risk cannot transfer them, choose a model and effort, then press Sent",
       interactionMode: "manual",
@@ -678,7 +904,7 @@ class BrowserHost {
     }
     if (this.turnTabs.get(tab.id) !== tab || contents.isDestroyed()) return;
     try {
-      await contents.loadURL(TEMPORARY_CHAT_URL);
+      await contents.loadURL(CHATGPT_CHAT_URL);
     } catch (error) {
       if (this.turnTabs.get(tab.id) !== tab || contents.isDestroyed()) return;
       if (isAbortedNavigationError(error)) {
@@ -1156,11 +1382,11 @@ class BrowserHost {
 
   async refreshChatGptHomeDocument() {
     // A navigation from the idle host already creates a fresh ChatGPT document. Reload only an
-    // existing Temporary Chat document so the helper observes one authoritative SPA bootstrap.
-    if (isTemporaryChatUrl(this.view.webContents.getURL())) {
+    // existing home document so the helper observes one authoritative SPA bootstrap.
+    if (this.view.webContents.getURL() === CHATGPT_CHAT_URL) {
       await this.hardRefreshHome();
     } else {
-      await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+      await this.view.webContents.loadURL(CHATGPT_CHAT_URL);
     }
     await this.waitForAuthenticated(60_000);
   }
@@ -1770,9 +1996,9 @@ class BrowserHost {
     this.syncViewVisibility();
     this.logger.info("browser.auth_surface_closed");
     if (refreshMain && this.manualOperation === "ChatGPT login" && !this.view.webContents.isDestroyed()) {
-      void this.view.webContents.loadURL(TEMPORARY_CHAT_URL).catch((error) => {
+      void this.view.webContents.loadURL(CHATGPT_CHAT_URL).catch((error) => {
         this.logger.error("browser.auth_refresh_failed", {
-          origin: navigationOriginForLog(TEMPORARY_CHAT_URL),
+          origin: navigationOriginForLog(CHATGPT_CHAT_URL),
           ...navigationErrorForLog(error),
         });
       });
@@ -1815,7 +2041,7 @@ class BrowserHost {
     if (inspectSession) requireAutomaticBrowserInspection(this, "ChatGPT session inspection");
     this.show();
     if (!this.selectedTurnTab() && this.view.webContents.getURL() === IDLE_BROWSER_URL) {
-      await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+      await this.view.webContents.loadURL(CHATGPT_CHAT_URL);
       if (inspectSession) await this.probeAuthentication();
     }
     return this.snapshot();
@@ -2247,6 +2473,36 @@ class BrowserHost {
     connectorIdentity,
     requireRetainedConversation = false,
   ) {
+    this.pendingTurnStarts ??= new Map();
+    const pending = this.pendingTurnStarts.get(traceId);
+    if (pending) {
+      if (pending.helperPid !== helperPid || pending.conversationKey !== conversationKey
+        || pending.connectorIdentity !== connectorIdentity
+        || pending.requireRetainedConversation !== requireRetainedConversation) {
+        throw new Error("A pending ChatGPT browser turn is owned by different helper or conversation metadata");
+      }
+      return await pending.operation;
+    }
+    const operation = BrowserHost.prototype.beginOwnedTurn.call(
+      this, traceId, reveal, helperPid, conversationKey, connectorIdentity, requireRetainedConversation,
+    );
+    const start = { helperPid, conversationKey, connectorIdentity, requireRetainedConversation, operation };
+    this.pendingTurnStarts.set(traceId, start);
+    try {
+      return await operation;
+    } finally {
+      if (this.pendingTurnStarts.get(traceId) === start) this.pendingTurnStarts.delete(traceId);
+    }
+  }
+
+  async beginOwnedTurn(
+    traceId,
+    reveal,
+    helperPid,
+    conversationKey,
+    connectorIdentity,
+    requireRetainedConversation,
+  ) {
     if (this.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.manualOperation}`);
     }
@@ -2254,12 +2510,20 @@ class BrowserHost {
       throw new BrowserTurnCancelledError(traceId);
     }
     const sameTrace = [...this.turnTabs.values()].find((tab) => tab.traceId === traceId);
+    if (sameTrace?.savingCheckpoint) {
+      throw new Error("This ChatGPT turn is still saving its final checkpoint");
+    }
     if (sameTrace && sameTrace.interactionMode !== "automatic") {
       throw new Error(`Browser turn ${traceId} already belongs to Zero Risk interaction`);
     }
     if (sameTrace && (sameTrace.conversationKey !== conversationKey
       || sameTrace.connectorIdentity !== connectorIdentity)) {
       throw new Error(`ChatGPT browser turn ${traceId} conversation metadata does not match its owned tab`);
+    }
+    if (conversationKey && [...this.turnTabs.values()].some(tab => tab !== sameTrace
+      && tab.interactionMode === "automatic" && tab.status === "running"
+      && tab.conversationKey === conversationKey && tab.connectorIdentity === connectorIdentity)) {
+      throw new Error("A turn is already running for this ChatGPT conversation");
     }
     const retainedMatches = conversationKey ? [...this.turnTabs.values()].filter((tab) => (
       tab.interactionMode === "automatic"
@@ -2276,12 +2540,16 @@ class BrowserHost {
       throw new Error(`ChatGPT browser turn ${traceId} is retained under different conversation metadata`);
     }
     const existing = sameTrace?.status === "running" ? sameTrace : exactRetained;
+    const replacingOwner = existing?.status === "running" && existing.helperPid !== helperPid;
+    if (replacingOwner && processRunning(existing.helperPid)) {
+      throw new Error(`ChatGPT browser turn ${traceId} is owned by another helper process`);
+    }
+    const saved = existing?.status === "running" && !replacingOwner
+      ? undefined : this.findSavedConversation(conversationKey, connectorIdentity);
     if (existing) {
-      const reused = existing.status === "ready";
+      let reused = existing.status === "ready";
+      const retainedSurfaceReady = reused && existing.bootstrapReady === true;
       if (existing.status === "running" && existing.helperPid !== helperPid) {
-        if (processRunning(existing.helperPid)) {
-          throw new Error(`ChatGPT browser turn ${traceId} is owned by another helper process`);
-        }
         this.logger.warn("browser.stale_turn_owner_replaced", {
           tabId: existing.id,
           traceId,
@@ -2295,10 +2563,15 @@ class BrowserHost {
       existing.status = "running";
       existing.loading = true;
       existing.message = "ChatGPT is working";
-      if (!reused) {
-        existing.bootstrapReady = false;
-        existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
+      existing.bootstrapReady = false;
+      existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
+      existing.lastHeartbeatAt = Date.now();
+      if ((reused || replacingOwner) && this.descriptorPath) {
+        const checkpoint = replacingOwner && saved ? { ...saved, ready: false } : existing.savedCheckpoint ?? saved;
+        delete existing.savedCheckpoint;
+        reused = await this.resumeSavedConversation(existing, checkpoint, requireRetainedConversation, false);
       }
+      existing.bootstrapReady = reused && retainedSurfaceReady;
       existing.lastHeartbeatAt = Date.now();
       if (!existing.view.webContents.isDestroyed()) {
         existing.view.webContents.setBackgroundThrottling(false);
@@ -2316,19 +2589,23 @@ class BrowserHost {
         connectorBound: existing.connectorBound === true,
       };
     }
-    if (requireRetainedConversation) {
+    if (requireRetainedConversation && !saved) {
       const error = new Error("The retained ChatGPT conversation is no longer available");
       error.code = "retained_conversation_unavailable";
       throw error;
     }
     const tab = await this.createTurnTab(traceId, helperPid, conversationKey, connectorIdentity);
+    let reused = false;
+    if (saved) {
+      reused = await this.resumeSavedConversation(tab, saved, requireRetainedConversation, true);
+    }
     this.selectedTabId = tab.id;
     if (reveal) this.show();
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
     this.logger.info("browser.tab_created", { tabId: tab.id, traceId, tabCount: this.turnTabs.size });
     this.writeDescriptor();
-    return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false, connectorBound: false };
+    return { surfaceId: tab.surfaceId, tabId: tab.id, reused, connectorBound: false };
   }
 
   async endTurn(
@@ -2355,19 +2632,35 @@ class BrowserHost {
         `Browser helper ownership mismatch: expected ${tab.helperPid}, received ${helperPid}`,
       );
     }
+    const retaining = status === "completed" && retain && tab.conversationKey
+      && (!tab.connectorIdentity || connectorBound);
+    let checkpointFailed = false;
+    if (retaining) {
+      tab.lastHeartbeatAt = Date.now();
+      tab.savingCheckpoint = true;
+      try {
+        await this.rememberSavedConversation(tab);
+      } catch {
+        checkpointFailed = true;
+        this.logger.warn("browser.saved_conversation_checkpoint_failed", { tabId: tab.id, traceId });
+      } finally {
+        tab.savingCheckpoint = false;
+      }
+    }
     const cancelledByUser = this.userCancelledTurnOwners.get(traceId) === helperPid;
+    if (this.turnTabs.get(tab.id) !== tab || tab.traceId !== traceId || tab.helperPid !== helperPid) {
+      return { cancelledByUser };
+    }
     tab.status = status === "completed" ? "ready" : status === "aborted" ? "aborted" : "error";
     this.syncPowerSaveBlocker();
-    tab.message = status === "completed" ? "Task completed" : message || `ChatGPT turn ${status}`;
+    tab.message = checkpointFailed ? "Task completed; restart recovery checkpoint could not be saved"
+      : status === "completed" ? "Task completed" : message || `ChatGPT turn ${status}`;
     tab.loading = false;
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.setBackgroundThrottling(true);
     if (status === "completed") {
       this.logger.info("browser.tab_completed", { tabId: tab.id, traceId });
     }
-    if (status === "completed"
-      && retain
-      && tab.conversationKey
-      && (!tab.connectorIdentity || connectorBound)) {
+    if (retaining && !cancelledByUser) {
       tab.connectorBound = connectorBound === true;
       tab.lastHeartbeatAt = Date.now();
       if (hideAfterTurn && !this.activeTraceId) this.hide();
@@ -2423,7 +2716,7 @@ class BrowserHost {
         this.logger.info("browser.login_opened");
         const current = this.view.webContents.getURL();
         if (!current.startsWith(CHATGPT_ORIGIN)) {
-          await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+          await this.view.webContents.loadURL(CHATGPT_CHAT_URL);
         }
         await this.probeAuthentication();
         const authenticated = await this.waitForAuthenticated();
@@ -2497,7 +2790,7 @@ class BrowserHost {
   async resetFailedPasskeyLogin() {
     await this.clearOwnedSessionForPasskey();
     const contents = this.view.webContents;
-    await contents.loadURL(TEMPORARY_CHAT_URL);
+    await contents.loadURL(CHATGPT_CHAT_URL);
     const browser = await this.probeAuthentication();
     if (browser.authenticated) throw new Error("Partial passkey session remained authenticated after cleanup");
     this.setState({ authenticated: false, loading: false, status: "signed-out", message: "Sign in to ChatGPT" });
@@ -2522,7 +2815,7 @@ class BrowserHost {
       for (const cookie of state.cookies) await contents.session.cookies.set(cookie);
       contents.session.flushStorageData();
       await contents.session.cookies.flushStore();
-      await contents.loadURL(TEMPORARY_CHAT_URL);
+      await contents.loadURL(CHATGPT_CHAT_URL);
       if (state.localStorage.length > 0) {
         const entries = javaScriptLiteral(state.localStorage);
         await contents.executeJavaScript(`(() => {
@@ -2531,7 +2824,7 @@ class BrowserHost {
           }
           for (const entry of ${entries}) localStorage.setItem(entry.name, entry.value);
         })()`, true);
-        await contents.loadURL(TEMPORARY_CHAT_URL);
+        await contents.loadURL(CHATGPT_CHAT_URL);
       }
       result = await this.waitForAuthenticated(60_000);
       await this.runSessionInspection(false);
@@ -2582,7 +2875,7 @@ class BrowserHost {
         message: "Signing out of ChatGPT",
         status: "loading",
       });
-      await contents.loadURL(TEMPORARY_CHAT_URL);
+      await contents.loadURL(CHATGPT_CHAT_URL);
       const browser = await this.probeAuthentication();
       if (browser.authenticated) {
         throw new Error("ChatGPT session remained authenticated after local session data was cleared");
@@ -2599,8 +2892,8 @@ class BrowserHost {
     if (this.sessionRefreshOperation) return this.sessionRefreshOperation;
     const operation = this.withManualOperation("session refresh", async () => {
       this.setState({ status: "loading", message: "Checking saved ChatGPT session" });
-      if (!isTemporaryChatUrl(this.view.webContents.getURL())) {
-        await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+      if (!isSavedChatUrl(this.view.webContents.getURL())) {
+        await this.view.webContents.loadURL(CHATGPT_CHAT_URL);
       }
       const state = await this.probeAuthentication();
       if (state.authenticated) {
@@ -2633,16 +2926,15 @@ class BrowserHost {
       return this.snapshot();
     }
     const probe = (contents) => contents.executeJavaScript(`(async () => {
-      const expectedUrl = new URL(${JSON.stringify(TEMPORARY_CHAT_URL)});
+      const expectedUrl = new URL(${JSON.stringify(CHATGPT_CHAT_URL)});
+      const CHATGPT_ORIGIN = expectedUrl.origin;
       const readSurface = () => {
         const composer = ${visibleElementScript(COMPOSER_SELECTOR)};
         const actualUrl = new URL(location.href);
         return {
           url: actualUrl.href,
           composer: Boolean(composer),
-          temporary: actualUrl.origin === expectedUrl.origin
-            && actualUrl.pathname === expectedUrl.pathname
-            && actualUrl.searchParams.get("temporary-chat") === "true",
+          saved: (${isSavedChatUrl.toString()})(actualUrl.href),
           readyState: document.readyState,
         };
       };
@@ -2703,33 +2995,33 @@ class BrowserHost {
     })()`, true).catch(() => ({
       url: "",
       composer: false,
-      temporary: false,
+      saved: false,
       sessionAuthenticated: false,
       sessionCheckError: "ChatGPT session verification could not inspect the browser. Retry after the page finishes loading.",
       readyState: "unknown",
     }));
     let result = await probe(this.view.webContents);
-    if (!(result.composer && result.temporary && result.sessionAuthenticated)
+    if (!(result.composer && result.saved && result.sessionAuthenticated)
       && this.authView
       && !this.authView.webContents.isDestroyed()) {
       const authResult = await probe(this.authView.webContents);
       if (authResult.sessionAuthenticated) {
         const completedAuthView = this.authView;
         this.closeAuthView(completedAuthView, true, false);
-        await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+        await this.view.webContents.loadURL(CHATGPT_CHAT_URL);
         url = this.view.webContents.getURL();
         result = await probe(this.view.webContents);
       }
     }
     if (this.manualOperation === "ChatGPT login"
       && result.sessionAuthenticated
-      && !result.temporary
+      && !result.saved
       && !this.view.webContents.isDestroyed()) {
-      await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+      await this.view.webContents.loadURL(CHATGPT_CHAT_URL);
       url = this.view.webContents.getURL();
       result = await probe(this.view.webContents);
     }
-    if (result.composer && result.temporary && result.sessionAuthenticated) {
+    if (result.composer && result.saved && result.sessionAuthenticated) {
       if (this.authView && !this.authView.webContents.isDestroyed()) {
         this.closeAuthView(this.authView, true, false);
       }
@@ -2862,7 +3154,7 @@ class BrowserHost {
       logger: this.logger,
     });
     const inspected = result?.value;
-    if (!inspected || inspected.authenticated !== true || inspected.temporary !== true || typeof inspected.url !== "string") {
+    if (!inspected || inspected.authenticated !== true || inspected.temporary !== false || !isSavedChatUrl(inspected.url)) {
       throw new Error("Browser helper returned invalid ChatGPT session evidence");
     }
     if (detectCapabilities
@@ -2985,11 +3277,11 @@ module.exports = {
   CHATGPT_VIEWPORT_CSS,
   IDLE_BROWSER_URL,
   isChatGptCloudflareChallengeResponse,
-  isTemporaryChatUrl,
+  isSavedChatUrl,
   loadCommittedBrowserSurface,
   MANUAL_SUBMIT_TIMEOUT_MS,
   MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS,
   navigationErrorForLog,
   navigationOriginForLog,
-  TEMPORARY_CHAT_URL,
+  CHATGPT_CHAT_URL,
 };

@@ -331,6 +331,66 @@ test("failed candidate validation preserves the previous validated runtime", () 
   }
 });
 
+test("packaged runtime reuses a locked installed bundle instead of renaming it", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-runtime-locked-"));
+  const resourcesPath = runtimeFixture(root);
+  const coreHome = path.join(root, "core-home");
+  const app = { isPackaged: true, getVersion: () => "0.2.0" };
+  const originalRename = fs.renameSync;
+  try {
+    const installed = ensurePackagedRuntime({ app, coreHome, resourcesPath });
+    fs.renameSync = (source, destination) => {
+      if (source === installed || destination === installed) {
+        const error = new Error(`EPERM: operation not permitted, rename '${source}' -> '${destination}'`);
+        error.code = "EPERM";
+        throw error;
+      }
+      return originalRename(source, destination);
+    };
+    assert.equal(ensurePackagedRuntime({ app, coreHome, resourcesPath }), installed);
+  } finally {
+    fs.renameSync = originalRename;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("packaged runtime installs a side-by-side fallback when a stale bundle is locked", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-runtime-fallback-"));
+  const resourcesPath = runtimeFixture(root);
+  const coreHome = path.join(root, "core-home");
+  const app = { isPackaged: true, getVersion: () => "0.2.0" };
+  const originalRename = fs.renameSync;
+  try {
+    const installed = ensurePackagedRuntime({ app, coreHome, resourcesPath });
+    const source = path.join(resourcesPath, "runtime");
+    fs.writeFileSync(path.join(source, "app", "cli.js"), "new cli");
+    writeRuntimeManifest(source);
+    fs.renameSync = (sourcePath, destinationPath) => {
+      if (sourcePath === installed || destinationPath === installed) {
+        const error = new Error(`EPERM: operation not permitted, rename '${sourcePath}' -> '${destinationPath}'`);
+        error.code = "EPERM";
+        throw error;
+      }
+      return originalRename(sourcePath, destinationPath);
+    };
+    const fallback = ensurePackagedRuntime({ app, coreHome, resourcesPath });
+    assert.notEqual(fallback, installed);
+    assert.match(fallback, /\.fallback-/);
+    assert.equal(fs.readFileSync(path.join(fallback, "app", "cli.js"), "utf8"), "new cli");
+    assert.equal(
+      validateRuntimeBundle(fallback, {
+        version: "0.2.0",
+        platform: process.platform,
+        arch: process.arch,
+      }),
+      fallback,
+    );
+  } finally {
+    fs.renameSync = originalRename;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("packaged runtime replaces stale files when a release is refreshed under the same version", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-runtime-refresh-"));
   const resourcesPath = runtimeFixture(root, "0.2.0");

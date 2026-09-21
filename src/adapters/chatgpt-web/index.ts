@@ -843,7 +843,7 @@ export function createChatGptWebAdapter(
         const structuredOutputValidator = parsed._compactionRequest
           ? async (answer: string): Promise<string> => {
             const summary = canonicalizeCompactionHandoff(parsed, answer);
-            const verdict = await withAbort(judgeCompactionHandoff(parsed, summary), incoming.abortSignal);
+            const verdict = await withAbort(judgeCompactionHandoff(parsed, summary, incoming.abortSignal), incoming.abortSignal);
             if (!verdict.acceptable) {
               throw new JevDecisionError("compaction_handoff", "the summary was rejected; retry compaction with complete context");
             }
@@ -969,7 +969,7 @@ export function createChatGptWebAdapter(
                       const rawSummary = await withAbort(fallbackRuntime.browser, operationSignal);
                       await withAbort(fallbackRuntime.physicalSettlement, operationSignal);
                       const summary = canonicalizeCompactionHandoff(parsed, rawSummary);
-                      const verdict = await withAbort(judgeCompactionHandoff(parsed, summary), operationSignal);
+                      const verdict = await withAbort(judgeCompactionHandoff(parsed, summary, operationSignal), operationSignal);
                       if (!verdict.acceptable) {
                         throw new JevDecisionError("compaction_handoff", "the replacement summary was rejected; retry compaction with complete context");
                       }
@@ -1061,7 +1061,7 @@ export function createChatGptWebAdapter(
                       );
                     }
                     const summary = canonicalizeCompactionHandoff(parsed, rawSummary);
-                    const verdict = await judgeCompactionHandoff(parsed, summary);
+                    const verdict = await judgeCompactionHandoff(parsed, summary, operationSignal);
                     await withAbort(
                       preserveFinalResponse
                         ? chatGptTurnSessions.retireConversationPreservingFinalResponse(

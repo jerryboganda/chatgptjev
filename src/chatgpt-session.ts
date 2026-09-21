@@ -2,7 +2,7 @@ import type { Locator, Page } from "playwright-core";
 import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
 import { describeChatGptLoginState } from "./adapters/chatgpt-web/ui-judgments";
 
-export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
+export const CHATGPT_CHAT_URL = "https://chatgpt.com/";
 export const CHATGPT_COMPOSER_SELECTOR = [
   '[data-testid="prompt-textarea"]',
   "#prompt-textarea",
@@ -171,11 +171,15 @@ export async function assertAuthenticatedChatGptPage(page: Page): Promise<void> 
   }
 }
 
-export async function assertTemporaryChatPage(page: Page): Promise<void> {
+export async function assertSavedChatPage(page: Page): Promise<void> {
   const url = new URL(page.url());
-  const expected = new URL(CHATGPT_TEMPORARY_CHAT_URL);
-  if (url.origin !== expected.origin || url.pathname !== expected.pathname || url.searchParams.get("temporary-chat") !== "true") {
-    throw new Error(`ChatGPT left the isolated Temporary Chat surface (${page.url()})`);
+  const expected = new URL(CHATGPT_CHAT_URL);
+  const conversationPath = /^\/c\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(url.pathname);
+  if (url.origin !== expected.origin
+    || url.username || url.password || url.hash
+    || (url.pathname !== "/" && !conversationPath)
+    || url.searchParams.has("temporary-chat")) {
+    throw new Error("ChatGPT left the owned saved-chat surface");
   }
 }
 

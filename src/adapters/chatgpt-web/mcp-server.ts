@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import { namespacedToolName, type CodexTool } from "../../types";
+import { JevDecisionError } from "../../lib/judge";
 import { VERSION } from "../../version";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
@@ -556,9 +557,11 @@ export async function runChatGptMcpServer(options: {
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(new TurnBrokerTimeoutError()), timeoutMs);
     const operationSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+    let executionState: "not_started" | "pending" | "completed" = "not_started";
     try {
       const reviewed = await judgeNativeToolInvocation(tool, payload, operationSignal);
       operationSignal.throwIfAborted();
+      executionState = "pending";
       const response = await callTurnBroker<BrokerToolResult>(options.brokerSocketPath, {
         method: "invoke",
         bindingId,
@@ -566,9 +569,22 @@ export async function runChatGptMcpServer(options: {
         freeform: tool.freeform === true,
         ...(tool.freeform ? { input: reviewed.input ?? "" } : { arguments: reviewed.arguments ?? {} }),
       }, Math.max(1, expiresAt - Date.now()), operationSignal);
+      executionState = "completed";
       // Item 10: regex pass + Jev secret/PII gate before any tool output reaches ChatGPT's servers.
       return await maskSecretsInToolResult(asMcpResult(response), operationSignal);
     } catch (error) {
+      if (error instanceof JevDecisionError && !operationSignal.aborted && executionState !== "pending") {
+        console.error(`[chatgpt-web-mcp] required review failed for ${wireName(tool)}; execution=${executionState}; turn preserved`);
+        return result({
+          code: error.code,
+          tool: wireName(tool),
+          execution_state: executionState,
+          retryable: false,
+          message: error.message + (executionState === "completed"
+            ? " The native tool already completed; its output was withheld. Do not repeat the native operation. Restore Jev before continuing."
+            : " The native tool was not run. Restore Jev review before retrying this operation."),
+        }, true);
+      }
       const timedOut = error instanceof TurnBrokerTimeoutError || operationSignal.reason instanceof TurnBrokerTimeoutError;
       // A cancelled/timed-out MCP request no longer has a consumer for the native result. Revoke
       // the whole turn capability so the broker drops the pending invocation and every later call

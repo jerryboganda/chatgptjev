@@ -4,6 +4,8 @@ import { createContext, runInContext } from "node:vm";
 import type { Locator } from "playwright-core";
 import { ChatGptBrowserWorker, ChatGptCompletionTracker, CHATGPT_COMPLETION_SETTLE_MS } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptMarkdownBuffer, type ChatGptMarkdownSegment } from "../src/adapters/chatgpt-web/markdown";
+import { configureJudgeForTests } from "../src/lib/judge";
+import { resetChatGptUiJudgmentsForTests } from "../src/adapters/chatgpt-web/ui-judgments";
 
 const smokeHtml = readFileSync(new URL("./fixtures/chatgpt-dil-smoke.html", import.meta.url), "utf8");
 type Snapshot = {
@@ -107,4 +109,41 @@ test("DIL response extraction preserves ownership, commentary and completion bou
   const noCopy = await snapshot(smokeHtml.replace('data-testid="copy-turn-action-button"', 'data-testid="other-action"'));
   expect(noCopy.visibleText).toBe("CODEX WEB GPT READY");
   expect(noCopy.completionActionVisible).toBeFalse();
+});
+
+test("a recovered stopped-label verdict updates the current and cached response immediately", async () => {
+  let attempts = 0;
+  let reads = 0;
+  const restore = configureJudgeForTests({
+    enabled: true, apiKey: () => "offline-fixture",
+    evaluate: (async ({ questions }: { questions: Record<string, unknown> }) => {
+      attempts += 1;
+      return {
+        answers: Object.fromEntries(Object.keys(questions).map(id => [id, { type: "boolean", probability: attempts <= 3 ? 0.5 : 0.99 }])),
+        usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+      };
+    }) as never,
+  });
+  const observed = {
+    responsePresent: true, stoppedThinkingVisible: false, visibleText: "Partial answer", fullHtml: "<p>Partial answer</p>",
+    markdownSegments: [], completionActionVisible: true,
+    traceBlocks: [{ kind: "status", text: "Reasoning interrupted by operator" }],
+  };
+  const locator = {
+    evaluate: async () => { reads += 1; return reads === 1 ? { key: "unchanged", snapshot: observed } : { key: "unchanged" }; },
+    page: () => ({ isClosed: () => false }),
+  };
+  const worker = Object.create(ChatGptBrowserWorker.prototype) as {
+    responseDomSnapshot(locator: unknown, cache: object): Promise<{ stoppedThinkingVisible: boolean }>;
+  };
+  const cache = {};
+  try {
+    await expect(worker.responseDomSnapshot(locator, cache)).rejects.toThrow(/uncertain/);
+    expect((await worker.responseDomSnapshot(locator, cache)).stoppedThinkingVisible).toBeTrue();
+    expect((await worker.responseDomSnapshot(locator, cache)).stoppedThinkingVisible).toBeTrue();
+    expect(attempts).toBe(4);
+  } finally {
+    restore();
+    resetChatGptUiJudgmentsForTests();
+  }
 });

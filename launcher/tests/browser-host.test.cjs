@@ -15,9 +15,10 @@ const {
 const {
   allowedAuthUrl,
   BrowserHost,
+  CHATGPT_CHAT_URL,
   IDLE_BROWSER_URL,
   isChatGptCloudflareChallengeResponse,
-  isTemporaryChatUrl,
+  isSavedChatUrl,
   loadCommittedBrowserSurface,
   MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS,
   MANUAL_SUBMIT_TIMEOUT_MS,
@@ -225,7 +226,7 @@ test("manual edit retry survives Electron superseding the ChatGPT navigation", a
 
   assert.deepEqual(observed.calls, [
     ["load", IDLE_BROWSER_URL],
-    ["load", "https://chatgpt.com/?temporary-chat=true"],
+    ["load", "https://chatgpt.com/"],
   ]);
   assert.equal(observed.fixture.turnTabs.has(observed.tab.id), true);
   assert.deepEqual(observed.terminal, []);
@@ -327,7 +328,7 @@ test("the idle home browser performs one bounded reload for a Cloudflare challen
     view: {
       webContents: {
         id: 42,
-        getURL: () => "https://chatgpt.com/?temporary-chat=true",
+        getURL: () => "https://chatgpt.com/",
         isDestroyed: () => false,
         loadURL: async (url) => calls.push(["loadURL", url]),
       },
@@ -352,7 +353,7 @@ test("the idle home browser performs one bounded reload for a Cloudflare challen
   await fixture.cloudflareChallengeRecovery;
 
   assert.deepEqual(calls.filter(([name]) => name === "loadURL"), [
-    ["loadURL", "https://chatgpt.com/?temporary-chat=true"],
+    ["loadURL", "https://chatgpt.com/"],
   ]);
   assert.equal(fixture.cloudflareChallengeRecoveryArmed, false);
 
@@ -429,11 +430,20 @@ test("descriptor-owned home surface stays attached offscreen while another launc
   ]);
 });
 
-test("smoke preserves an already-hydrated Temporary Chat page", () => {
-  assert.equal(isTemporaryChatUrl("https://chatgpt.com/?temporary-chat=true"), true);
-  assert.equal(isTemporaryChatUrl("https://chatgpt.com/?temporary-chat=false"), false);
-  assert.equal(isTemporaryChatUrl("https://chatgpt.com/c/abc?temporary-chat=true"), false);
-  assert.equal(isTemporaryChatUrl("not a url"), false);
+test("saved-chat entry and validation preserve history without accepting other surfaces", () => {
+  assert.equal(CHATGPT_CHAT_URL, "https://chatgpt.com/");
+  assert.equal(isSavedChatUrl(CHATGPT_CHAT_URL), true);
+  assert.equal(isSavedChatUrl("https://chatgpt.com/c/12345678-1234-1234-1234-123456789abc"), true);
+  for (const url of [
+    "https://chatgpt.com/?temporary-chat=true",
+    "https://chatgpt.com/?temporary-chat=false",
+    "https://chatgpt.com/c/abc?temporary-chat=true",
+    "https://chatgpt.com/share/12345678-1234-1234-1234-123456789abc",
+    "https://chatgpt.com.evil.example/",
+    "https://other-user@chatgpt.com/",
+    "http://chatgpt.com/",
+    "not a url",
+  ]) assert.equal(isSavedChatUrl(url), false, url);
 });
 
 test("session inspection delegates navigation and capability detection to the shared browser helper", async () => {
@@ -451,8 +461,8 @@ test("session inspection delegates navigation and capability detection to the sh
         type: "result",
         value: {
           authenticated: true,
-          temporary: true,
-          url: "https://chatgpt.com/?temporary-chat=true",
+          temporary: false,
+          url: "https://chatgpt.com/",
           solAvailable: true,
           extraHighAvailable: true, proAvailable: true,
         },
@@ -464,8 +474,8 @@ test("session inspection delegates navigation and capability detection to the sh
 
   assert.deepEqual(inspected, {
     authenticated: true,
-    temporary: true,
-    url: "https://chatgpt.com/?temporary-chat=true",
+    temporary: false,
+    url: "https://chatgpt.com/",
     solAvailable: true,
     extraHighAvailable: true, proAvailable: true,
   });
@@ -482,11 +492,11 @@ test("session inspection fails closed on incomplete shared-helper capability evi
     descriptorPath: "/runtime/launcher-browser.json",
     getConnectorName: () => "Codex Native",
     logger: { info() {} },
-    view: { webContents: { getURL: () => "https://chatgpt.com/?temporary-chat=true" } },
+    view: { webContents: { getURL: () => "https://chatgpt.com/" } },
     refreshChatGptHomeDocument: async () => {},
     runBrowserHelperOperation: async () => ({
       type: "result",
-      value: { authenticated: true, temporary: true, url: "https://chatgpt.com/?temporary-chat=true" },
+      value: { authenticated: true, temporary: false, url: "https://chatgpt.com/" },
     }),
   });
   await assert.rejects(
@@ -789,7 +799,7 @@ test("guest and incomplete server sessions do not prove launcher authentication"
         getURL: () => "https://chatgpt.com/?temporary-chat=true",
         executeJavaScript: async () => ({
           composer: true,
-          temporary: true,
+          saved: true,
           sessionAuthenticated: false,
           readyState: "complete",
         }),
@@ -805,7 +815,7 @@ test("guest and incomplete server sessions do not prove launcher authentication"
   assert.equal(result.status, "signed-out");
 });
 
-test("launcher authentication requires the Temporary Chat composer and complete server session", async () => {
+test("launcher authentication requires the saved-chat composer and complete server session", async () => {
   const fixture = {
     state: { authenticated: false },
     activeTraceId: null,
@@ -813,10 +823,10 @@ test("launcher authentication requires the Temporary Chat composer and complete 
     view: {
       webContents: {
         isDestroyed: () => false,
-        getURL: () => "https://chatgpt.com/?temporary-chat=true",
+        getURL: () => "https://chatgpt.com/",
         executeJavaScript: async () => ({
           composer: true,
-          temporary: true,
+          saved: true,
           sessionAuthenticated: true,
           readyState: "complete",
         }),
@@ -834,7 +844,7 @@ test("launcher authentication requires the Temporary Chat composer and complete 
 
 test("session verification distinguishes a missing login from network and invalid-response failures", async () => {
   const vm = require("node:vm");
-  const url = "https://chatgpt.com/?temporary-chat=true";
+  const url = "https://chatgpt.com/";
   const sessionUrl = "https://chatgpt.com/api/auth/session";
   const response = (payload, overrides = {}) => ({
     ok: true, status: 200, url: sessionUrl,
@@ -1164,7 +1174,7 @@ test("logout clears only the owned ChatGPT session and returns to the sign-in su
   assert.deepEqual(calls[0], ["manualOperation", "ChatGPT logout"]);
   assert.deepEqual(calls[1], ["closeAuthView", authView, true, false]);
   assert.deepEqual(calls[2], ["clearStorageData"]);
-  assert.deepEqual(calls[4], ["loadURL", "https://chatgpt.com/?temporary-chat=true"]);
+  assert.deepEqual(calls[4], ["loadURL", "https://chatgpt.com/"]);
   assert.ok(calls.some(([name]) => name === "activateHomeSurface"));
   assert.ok(calls.some(([name]) => name === "show"));
 });
@@ -1188,14 +1198,14 @@ test("launcher shutdown persists ChatGPT DOM storage and cookies before browser 
   assert.deepEqual(calls, ["storage", "cookies"]);
 });
 
-test("OAuth completion is re-proved on the primary Temporary Chat surface before login succeeds", async () => {
+test("OAuth completion is re-proved on the primary saved-chat surface before login succeeds", async () => {
   let primaryReady = false;
   const completedAuthView = {
     webContents: {
       isDestroyed: () => false,
       executeJavaScript: async () => ({
         composer: true,
-        temporary: false,
+        saved: false,
         sessionAuthenticated: true,
         readyState: "complete",
       }),
@@ -1210,20 +1220,20 @@ test("OAuth completion is re-proved on the primary Temporary Chat surface before
     view: {
       webContents: {
         getURL: () => primaryReady
-          ? "https://chatgpt.com/?temporary-chat=true"
+          ? "https://chatgpt.com/"
           : "https://chatgpt.com/auth/login",
         isDestroyed: () => false,
         executeJavaScript: async () => ({
           composer: primaryReady,
-          temporary: primaryReady,
+          saved: primaryReady,
           sessionAuthenticated: primaryReady,
           readyState: "complete",
           url: primaryReady
-            ? "https://chatgpt.com/?temporary-chat=true"
+            ? "https://chatgpt.com/"
             : "https://chatgpt.com/auth/login",
         }),
         loadURL: async (url) => {
-          assert.equal(url, "https://chatgpt.com/?temporary-chat=true");
+          assert.equal(url, "https://chatgpt.com/");
           primaryReady = true;
         },
       },
@@ -1241,11 +1251,11 @@ test("OAuth completion is re-proved on the primary Temporary Chat surface before
   const result = await BrowserHost.prototype.probeAuthentication.call(fixture);
   assert.equal(result.authenticated, true);
   assert.equal(fixture.authView, null);
-  assert.equal(result.url, "https://chatgpt.com/?temporary-chat=true");
+  assert.equal(result.url, "https://chatgpt.com/");
 });
 
-test("a successful primary login redirect is re-proved on Temporary Chat before login completes", async () => {
-  let currentUrl = "https://chatgpt.com/";
+test("a successful primary login redirect is re-proved on saved ChatGPT before login completes", async () => {
+  let currentUrl = "https://chatgpt.com/auth/callback";
   const loadedUrls = [];
   const fixture = {
     activeTraceId: null,
@@ -1259,7 +1269,7 @@ test("a successful primary login redirect is re-proved on Temporary Chat before 
         isDestroyed: () => false,
         executeJavaScript: async () => ({
           composer: true,
-          temporary: currentUrl === "https://chatgpt.com/?temporary-chat=true",
+          saved: currentUrl === "https://chatgpt.com/",
           sessionAuthenticated: true,
           readyState: "complete",
           url: currentUrl,
@@ -1276,9 +1286,9 @@ test("a successful primary login redirect is re-proved on Temporary Chat before 
 
   const result = await BrowserHost.prototype.probeAuthentication.call(fixture);
 
-  assert.deepEqual(loadedUrls, ["https://chatgpt.com/?temporary-chat=true"]);
+  assert.deepEqual(loadedUrls, ["https://chatgpt.com/"]);
   assert.equal(result.authenticated, true);
-  assert.equal(result.url, "https://chatgpt.com/?temporary-chat=true");
+  assert.equal(result.url, "https://chatgpt.com/");
 });
 
 test("an authenticated primary surface closes a stale embedded auth popup", async () => {
@@ -1287,7 +1297,7 @@ test("an authenticated primary surface closes a stale embedded auth popup", asyn
       isDestroyed: () => false,
       executeJavaScript: async () => ({
         composer: false,
-        temporary: false,
+        saved: false,
         sessionAuthenticated: false,
         readyState: "complete",
       }),
@@ -1302,14 +1312,14 @@ test("an authenticated primary surface closes a stale embedded auth popup", asyn
     logger: { info() {} },
     view: {
       webContents: {
-        getURL: () => "https://chatgpt.com/?temporary-chat=true",
+        getURL: () => "https://chatgpt.com/",
         isDestroyed: () => false,
         executeJavaScript: async () => ({
           composer: true,
-          temporary: true,
+          saved: true,
           sessionAuthenticated: true,
           readyState: "complete",
-          url: "https://chatgpt.com/?temporary-chat=true",
+          url: "https://chatgpt.com/",
         }),
       },
     },
@@ -1934,7 +1944,7 @@ test("launcher session refresh resolves persisted authentication before setup ac
   assert.deepEqual(calls, [
     ["operation", "session refresh"],
     ["state", { status: "loading", message: "Checking saved ChatGPT session" }],
-    ["load", "https://chatgpt.com/?temporary-chat=true"],
+    ["load", "https://chatgpt.com/"],
     ["probe"],
     ["state", { status: "ready", message: "ChatGPT is ready" }],
   ]);
@@ -1954,7 +1964,7 @@ test("concurrent launcher session refresh requests share one browser operation",
       return await action();
     },
     view: { webContents: {
-      getURL: () => "https://chatgpt.com/?temporary-chat=true",
+      getURL: () => "https://chatgpt.com/",
       loadURL: async () => {},
     } },
   };
@@ -2419,6 +2429,402 @@ test("a required retained conversation fails before creating a browser tab", asy
       && /retained ChatGPT conversation is no longer available/.test(error.message),
   );
   assert.equal(created, false);
+});
+
+function savedConversationFixture(directory, overrides = {}) {
+  const checkpoint = {
+    url: "https://chatgpt.com/c/12345678-1234-1234-1234-123456789abc",
+    accountHash: "f".repeat(64),
+    lastUserId: "12345678-1234-1234-1234-123456789001",
+    lastAssistantId: "12345678-1234-1234-1234-123456789002",
+    ...overrides,
+  };
+  const loaded = [];
+  const warnings = [];
+  const host = Object.assign(Object.create(BrowserHost.prototype), {
+    descriptorPath: resolve(directory, "launcher-browser.json"),
+    profile: "production",
+    manualOperation: null,
+    turnTabs: new Map(),
+    userCancelledTurnOwners: new Map(),
+    closedTurnOwners: new Map(),
+    selectedTabId: "home",
+    getBrowserInteractionMode: () => "automatic",
+    readSavedConversationAccount: async () => checkpoint.accountHash,
+    readSavedConversationCheckpoint: async () => ({ ...checkpoint }),
+    markTurnTabSurface: async () => {},
+    syncPowerSaveBlocker() {},
+    syncViewVisibility() {},
+    publishState() {},
+    writeDescriptor() {},
+    snapshot: () => ({ tabs: [] }),
+    logger: { info() {}, warn: (event, details) => warnings.push({ event, details }) },
+    createTurnTab: async (traceId, helperPid, conversationKey, connectorIdentity) => {
+      let url = checkpoint.url;
+      const tab = {
+        id: traceId,
+        surfaceId: `surface-${traceId}`,
+        traceId, helperPid, conversationKey, connectorIdentity,
+        connectorBound: false,
+        interactionMode: "automatic",
+        status: "running",
+        view: { webContents: {
+          isDestroyed: () => false,
+          getURL: () => url,
+          loadURL: async destination => { loaded.push(destination); url = destination; },
+          setBackgroundThrottling() {},
+        } },
+      };
+      host.turnTabs.set(tab.id, tab);
+      return tab;
+    },
+    removeTurnTab: tab => host.turnTabs.delete(tab.id),
+  });
+  return { host, loaded, warnings, checkpoint };
+}
+
+test("a completed saved conversation survives restart with fresh connector authorization", async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-"));
+  const conversationKey = "a".repeat(64);
+  try {
+    const first = savedConversationFixture(directory);
+    await first.host.beginTurn("trace_first", false, 123, conversationKey, "Codex Jev");
+    first.host.turnTabs.get("trace_first").prompt = "PRIVATE_PROMPT_MUST_NOT_BE_STORED";
+    await first.host.endTurn("trace_first", 123, "completed", false, undefined, true, true);
+    const indexPath = resolve(directory, "saved-conversations.json");
+    const stored = fs.readFileSync(indexPath, "utf8");
+    assert.ok(stored.includes(first.checkpoint.url));
+    assert.ok(!stored.includes("PRIVATE_PROMPT_MUST_NOT_BE_STORED"));
+    assert.ok(!stored.includes("connectorBound"));
+
+    const restarted = savedConversationFixture(directory);
+    const lease = await restarted.host.beginTurn("trace_next", false, 456, conversationKey, "Codex Jev");
+    assert.equal(lease.reused, true);
+    assert.equal(lease.connectorBound, false);
+    assert.deepEqual(restarted.loaded, [first.checkpoint.url]);
+    const pending = JSON.parse(fs.readFileSync(indexPath, "utf8")).conversations;
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].ready, false);
+    assert.equal(pending[0].accountHash, first.checkpoint.accountHash);
+
+    const afterCrash = savedConversationFixture(directory);
+    const crashLease = await afterCrash.host.beginTurn("trace_after_crash", false, 789, conversationKey, "Codex Jev");
+    assert.equal(crashLease.reused, false);
+    assert.deepEqual(afterCrash.loaded, [CHATGPT_CHAT_URL]);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+for (const [reason, overrides] of [
+  ["last user changed", { lastUserId: "12345678-1234-1234-1234-123456789003" }],
+  ["last answer changed", { lastAssistantId: "12345678-1234-1234-1234-123456789004" }],
+  ["conversation redirected", { url: "https://chatgpt.com/" }],
+]) test(`unsafe saved conversation recovery rebuilds canonical history: ${reason}`, async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-mismatch-"));
+  try {
+    const first = savedConversationFixture(directory);
+    await first.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev");
+    await first.host.endTurn("trace_first", 123, "completed", false, undefined, true, true);
+
+    const restarted = savedConversationFixture(directory, overrides);
+    const lease = await restarted.host.beginTurn("trace_next", false, 456, "a".repeat(64), "Codex Jev");
+    assert.equal(lease.reused, false);
+    assert.equal(lease.connectorBound, false);
+    assert.deepEqual(restarted.loaded, [first.checkpoint.url, CHATGPT_CHAT_URL]);
+    assert.ok(restarted.warnings.some(entry => entry.event === "browser.saved_conversation_rebuild"));
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("unsafe saved conversation recovery fails closed for retained-only work", async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-required-"));
+  try {
+    const first = savedConversationFixture(directory);
+    await first.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev");
+    await first.host.endTurn("trace_first", 123, "completed", false, undefined, true, true);
+    const restarted = savedConversationFixture(directory, { lastAssistantId: "12345678-1234-1234-1234-123456789004" });
+    await assert.rejects(
+      restarted.host.beginTurn("trace_next", false, 456, "a".repeat(64), "Codex Jev", true),
+      error => error?.code === "retained_conversation_unavailable",
+    );
+    assert.equal(restarted.host.turnTabs.size, 0);
+    assert.deepEqual(restarted.loaded, [first.checkpoint.url]);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+for (const unavailable of [false, true]) test(`saved conversation account boundary stops repeated retries (unavailable=${unavailable})`, async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-account-"));
+  try {
+    const first = savedConversationFixture(directory);
+    await first.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev");
+    await first.host.endTurn("trace_first", 123, "completed", false, undefined, true, true);
+    for (const traceId of ["trace_next", "trace_retry"]) {
+      const restarted = savedConversationFixture(directory, { accountHash: "e".repeat(64) });
+      if (unavailable) restarted.host.readSavedConversationAccount = async () => { throw new Error("session unavailable"); };
+      await assert.rejects(
+        restarted.host.beginTurn(traceId, false, 456, "a".repeat(64), "Codex Jev"),
+        error => error?.code === "saved_conversation_account_unverified",
+      );
+      assert.equal(restarted.host.turnTabs.size, 0);
+      assert.ok(!restarted.warnings.some(entry => entry.event === "browser.saved_conversation_rebuild"));
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("saved conversation checkpoints also protect still-open ready tabs", async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-ready-"));
+  try {
+    const fixture = savedConversationFixture(directory);
+    await fixture.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev");
+    await fixture.host.endTurn("trace_first", 123, "completed", false, undefined, true, true);
+    fixture.checkpoint.lastAssistantId = "12345678-1234-1234-1234-123456789004";
+    const lease = await fixture.host.beginTurn("trace_next", false, 456, "a".repeat(64), "Codex Jev");
+    assert.equal(lease.reused, false);
+    assert.equal(lease.connectorBound, false);
+    assert.deepEqual(fixture.loaded, [CHATGPT_CHAT_URL]);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("saved conversation ownership rejects simultaneous turns for the same key", async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-owner-"));
+  try {
+    const fixture = savedConversationFixture(directory);
+    await fixture.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev");
+    await assert.rejects(
+      fixture.host.beginTurn("trace_parallel", false, 456, "a".repeat(64), "Codex Jev"),
+      /already running/,
+    );
+    assert.equal(fixture.host.turnTabs.size, 1);
+    const independent = await fixture.host.beginTurn("trace_other", false, 456, "b".repeat(64), "Codex Jev");
+    assert.equal(independent.reused, false);
+    assert.equal(fixture.host.turnTabs.size, 2);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("saved conversation ownership remains active until checkpoint completion", async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-finishing-"));
+  try {
+    const fixture = savedConversationFixture(directory);
+    await fixture.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev");
+    let finishCheckpoint;
+    fixture.host.readSavedConversationCheckpoint = () => new Promise(resolve => { finishCheckpoint = resolve; });
+    const finishing = fixture.host.endTurn("trace_first", 123, "completed", false, undefined, true, true);
+    try {
+      await assert.rejects(
+        fixture.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev"),
+        /checkpoint/,
+      );
+      await assert.rejects(
+        fixture.host.beginTurn("trace_next", false, 456, "a".repeat(64), "Codex Jev"),
+        /already running/,
+      );
+    } finally {
+      finishCheckpoint({ ...fixture.checkpoint });
+      await finishing;
+    }
+    assert.equal(fixture.host.turnTabs.size, 1);
+    assert.equal(fixture.host.turnTabs.get("trace_first").status, "ready");
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("saved conversation recovery renews an old ready tab lease before checking its account", async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-lease-"));
+  try {
+    const fixture = savedConversationFixture(directory);
+    await fixture.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev");
+    await fixture.host.endTurn("trace_first", 123, "completed", false, undefined, true, true);
+    const tab = fixture.host.turnTabs.get("trace_first");
+    tab.lastHeartbeatAt = Date.now() - 600_000;
+    tab.bootstrapReady = true;
+    tab.bootstrapDeadlineAt = Date.now() - 600_000;
+    let finishAccount;
+    fixture.host.readSavedConversationAccount = () => new Promise(resolve => { finishAccount = resolve; });
+    const recovering = fixture.host.beginTurn("trace_next", false, 456, "a".repeat(64), "Codex Jev");
+    fixture.host.lastTurnSweepAt = Date.now();
+    await fixture.host.reapExpiredTurnTabs();
+    finishAccount(fixture.checkpoint.accountHash);
+    const lease = await recovering;
+    assert.equal(lease.reused, true);
+    assert.equal(fixture.host.turnTabs.get(tab.id), tab);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("saved conversation concurrent start retries await the same verified lease", async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-start-"));
+  try {
+    const first = savedConversationFixture(directory);
+    await first.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev");
+    await first.host.endTurn("trace_first", 123, "completed", false, undefined, true, true);
+    const restarted = savedConversationFixture(directory);
+    let accountStarted;
+    let finishAccount;
+    const started = new Promise(resolve => { accountStarted = resolve; });
+    restarted.host.readSavedConversationAccount = () => {
+      accountStarted();
+      return new Promise(resolve => { finishAccount = resolve; });
+    };
+    const original = restarted.host.beginTurn("trace_next", false, 456, "a".repeat(64), "Codex Jev");
+    await started;
+    const repeated = restarted.host.beginTurn("trace_next", false, 456, "a".repeat(64), "Codex Jev");
+    try {
+      await assert.rejects(
+        restarted.host.beginTurn("trace_next", false, 789, "a".repeat(64), "Codex Jev"),
+        /pending|owned/,
+      );
+    } finally {
+      finishAccount(restarted.checkpoint.accountHash);
+      await Promise.allSettled([original, repeated]);
+    }
+    const leases = await Promise.all([original, repeated]);
+    assert.equal(leases[0].reused, true);
+    assert.deepEqual(leases[0], leases[1]);
+    assert.equal(restarted.host.turnTabs.size, 1);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("saved conversation completion cannot replace the original account binding", async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-account-finish-"));
+  try {
+    const fixture = savedConversationFixture(directory);
+    await fixture.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev");
+    await fixture.host.endTurn("trace_first", 123, "completed", false, undefined, true, true);
+    const accountHash = fixture.checkpoint.accountHash;
+    await fixture.host.beginTurn("trace_next", false, 456, "a".repeat(64), "Codex Jev");
+    fixture.checkpoint.accountHash = "e".repeat(64);
+    await fixture.host.endTurn("trace_next", 456, "completed", false, undefined, true, true);
+    const [record] = fixture.host.readSavedConversations();
+    assert.equal(record.accountHash, accountHash);
+    assert.equal(record.ready, false);
+    assert.ok(fixture.warnings.some(entry => entry.event === "browser.saved_conversation_checkpoint_failed"));
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("saved conversation recovery keeps profile and connector identities separate", async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-isolation-"));
+  try {
+    const first = savedConversationFixture(directory);
+    await first.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev");
+    await first.host.endTurn("trace_first", 123, "completed", false, undefined, true, true);
+    for (const [profile, connector] of [["development", "Codex Jev"], ["production", "Different Connector"]]) {
+      const restarted = savedConversationFixture(directory);
+      restarted.host.profile = profile;
+      const lease = await restarted.host.beginTurn("trace_other", false, 456, "a".repeat(64), connector);
+      assert.equal(lease.reused, false);
+      assert.deepEqual(restarted.loaded, []);
+      assert.equal(restarted.host.readSavedConversations()[0].ready, true);
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("saved conversation dead-helper replacement still enforces the original account", async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-dead-helper-"));
+  try {
+    const fixture = savedConversationFixture(directory);
+    await fixture.host.beginTurn("trace_first", false, process.pid, "a".repeat(64), "Codex Jev");
+    await fixture.host.endTurn("trace_first", process.pid, "completed", false, undefined, true, true);
+    await fixture.host.beginTurn("trace_next", false, 2_147_483_647, "a".repeat(64), "Codex Jev");
+    fixture.checkpoint.accountHash = "e".repeat(64);
+    await assert.rejects(
+      fixture.host.beginTurn("trace_next", false, process.pid, "a".repeat(64), "Codex Jev"),
+      error => error?.code === "saved_conversation_account_unverified",
+    );
+    assert.equal(fixture.host.turnTabs.size, 0);
+    assert.equal(fixture.host.readSavedConversations()[0].accountHash, "f".repeat(64));
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("saved conversation allocation failure leaves its completed checkpoint resumable", async () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-allocation-"));
+  try {
+    const first = savedConversationFixture(directory);
+    await first.host.beginTurn("trace_first", false, 123, "a".repeat(64), "Codex Jev");
+    await first.host.endTurn("trace_first", 123, "completed", false, undefined, true, true);
+    const restarted = savedConversationFixture(directory);
+    const allocate = restarted.host.createTurnTab;
+    restarted.host.createTurnTab = async () => { throw new Error("browser tabs are at capacity"); };
+    await assert.rejects(
+      restarted.host.beginTurn("trace_next", false, 456, "a".repeat(64), "Codex Jev"),
+      /capacity/,
+    );
+    assert.equal(restarted.host.readSavedConversations()[0].ready, true);
+    restarted.host.createTurnTab = allocate;
+    const lease = await restarted.host.beginTurn("trace_next", false, 456, "a".repeat(64), "Codex Jev", true);
+    assert.equal(lease.reused, true);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("saved conversation reader stores only verified identity and completed message metadata", async () => {
+  const url = "https://chatgpt.com/c/12345678-1234-1234-1234-123456789abc";
+  const userId = "12345678-1234-1234-1234-123456789001";
+  const assistantId = "12345678-1234-1234-1234-123456789002";
+  const message = (role, id) => ({ getAttribute: name => name === "data-message-author-role" ? role : id });
+  const composer = { isConnected: true, getBoundingClientRect: () => ({ width: 400, height: 40 }) };
+  let running = false;
+  let payload = { user: { id: "account-one" }, accessToken: "MUST_NOT_LEAVE_SESSION_READER" };
+  const contents = {
+    getURL: () => url,
+    isDestroyed: () => false,
+    session: { fetch: async (destination, options) => {
+      assert.equal(destination, "https://chatgpt.com/api/auth/session");
+      assert.equal(options.credentials, "include");
+      assert.equal(options.cache, "no-store");
+      assert.ok(options.signal instanceof AbortSignal);
+      return {
+        ok: true, url: destination,
+        headers: { get: () => "application/json" },
+        json: async () => payload,
+      };
+    } },
+    executeJavaScript: async source => require("node:vm").runInNewContext(source, {
+      location: { href: url },
+      getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
+      document: { querySelectorAll: selector => selector.includes("data-message-author-role")
+        ? [message("user", userId), message("assistant", assistantId)]
+        : selector.includes("stop-button") ? running ? [composer] : [] : [composer] },
+    }),
+  };
+  const host = Object.assign(Object.create(BrowserHost.prototype), { getBrowserInteractionMode: () => "automatic" });
+  const checkpoint = await host.readSavedConversationCheckpoint(contents);
+  assert.deepEqual(checkpoint, {
+    url, accountHash: createHash("sha256").update("account-one").digest("hex"),
+    lastUserId: userId, lastAssistantId: assistantId,
+  });
+  assert.ok(!JSON.stringify(checkpoint).includes("account-one"));
+  assert.ok(!JSON.stringify(checkpoint).includes("MUST_NOT_LEAVE_SESSION_READER"));
+  running = true;
+  await assert.rejects(host.readSavedConversationCheckpoint(contents), /completed saved conversation checkpoint/);
+  running = false;
+  for (const invalid of [{ user: {} }, { user: { id: "account-one" }, error: "expired" }, { user: { id: "account-one" }, expires: "2000-01-01" }]) {
+    payload = invalid;
+    await assert.rejects(host.readSavedConversationCheckpoint(contents), /current account identity/);
+  }
+  host.getBrowserInteractionMode = () => "manual";
+  await assert.rejects(host.readSavedConversationCheckpoint(contents), /Zero Risk/);
+});
+
+test("saved conversation index is bounded and rejects untrusted URLs without storing extra data", () => {
+  const directory = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "saved-chat-index-"));
+  try {
+    const fixture = savedConversationFixture(directory);
+    const record = {
+      ...fixture.checkpoint, conversationKey: "a".repeat(64), connectorIdentity: "Codex Jev",
+      profile: "production", ready: true, updatedAt: 1, prompt: "MUST_NOT_BE_PERSISTED",
+    };
+    fixture.host.writeSavedConversations(Array.from({ length: 514 }, (_unused, index) => ({
+      ...record, conversationKey: createHash("sha256").update(String(index)).digest("hex"), updatedAt: index + 1,
+    })));
+    assert.equal(fixture.host.readSavedConversations().length, 512);
+    const indexPath = resolve(directory, "saved-conversations.json");
+    assert.ok(!fs.readFileSync(indexPath, "utf8").includes("MUST_NOT_BE_PERSISTED"));
+    for (const url of ["https://evil.example/c/12345678-1234-1234-1234-123456789abc", "https://chatgpt.com/?temporary-chat=true", `${record.url}?token=private`, "https://name:password@chatgpt.com/c/12345678-1234-1234-1234-123456789abc"]) {
+      fs.writeFileSync(indexPath, JSON.stringify({ version: 1, conversations: [{ ...record, url }] }));
+      assert.throws(() => fixture.host.readSavedConversations(), /index is invalid/);
+    }
+    fs.writeFileSync(indexPath, "{");
+    assert.throws(() => fixture.host.readSavedConversations(), SyntaxError);
+    fs.writeFileSync(indexPath, " ".repeat(1_048_577));
+    assert.throws(() => fixture.host.readSavedConversations(), /index could not be read/);
+    fs.writeFileSync(indexPath, JSON.stringify({ version: 1, conversations: [record, record] }));
+    assert.throws(() => fixture.host.findSavedConversation(record.conversationKey, record.connectorIdentity), /conflicting checkpoints/);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
 test("five browser tabs are a hard account-safety limit", async () => {
@@ -3202,7 +3608,7 @@ test("Zero Risk reveal navigates without inspecting the ChatGPT DOM", async () =
     snapshot: () => ({ visible: true }),
   });
   assert.deepEqual(await fixture.reveal(false), { visible: true });
-  assert.deepEqual(calls, ["show", ["loadURL", "https://chatgpt.com/?temporary-chat=true"]]);
+  assert.deepEqual(calls, ["show", ["loadURL", "https://chatgpt.com/"]]);
 });
 
 test("Zero Risk fails closed at every primary-surface inspection boundary", async () => {

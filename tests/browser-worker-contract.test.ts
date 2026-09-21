@@ -558,6 +558,33 @@ test("Luna turns without a retained conversation never send connector identity a
   expect(runExclusive.slice(connectorIdentity - 260, connectorIdentity)).toContain("turn.nativeConnector");
 });
 
+test("restored saved conversations carry explicit connector-binding evidence into attachment", () => {
+  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const runExclusive = workerSource.slice(workerSource.indexOf("  private async runExclusive("), workerSource.indexOf("  private async runBrowserTurn("));
+  expect(runExclusive).toContain("lease.connectorBound === true");
+  const runBrowserTurn = workerSource.slice(workerSource.indexOf("  private async runBrowserTurn("));
+  expect(runBrowserTurn).toContain("reuseConversation && reuseConnector");
+});
+
+test("saved chat connector selection leaves account personalization untouched", async () => {
+  const composer = {};
+  const menu = { filter() { return this; } };
+  const page = {
+    locator: () => menu,
+    getByText: () => ({}),
+    getByRole: () => { throw new Error("Saved chats must not open personalization settings"); },
+  };
+  const fixture = {
+    config: { appName: CHATGPT_CONNECTOR_NAME },
+    activeComposer: async () => composer,
+    connectorIsSelected: async () => true,
+  };
+  const prototype = ChatGptBrowserWorker.prototype as unknown as {
+    selectConnector(page: unknown): Promise<unknown>;
+  };
+  expect(await prototype.selectConnector.call(fixture, page)).toBe(composer);
+});
+
 test("a stalled DOM observation fails within its probe budget", async () => {
   expect(CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS).toBe(5_000);
   expect(MAX_CHATGPT_BROWSER_PAGE_REBINDS).toBe(2);
@@ -1399,7 +1426,7 @@ test("repeated connector verification reuses its selected pill before clearing t
   }, page, async checkpoint => { checkpoints.push(checkpoint); })).resolves.toBe(selectedComposer);
 
   expect(fillCalls).toBe(0);
-  expect(checkpoints).toEqual(["personalization-already-enabled", "connector-already-selected"]);
+  expect(checkpoints).toEqual(["connector-already-selected"]);
 });
 
 test("connector selection retriggers the complete mention after a fresh-page hydration miss", async () => {
@@ -1430,6 +1457,7 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
   const initialComposer = {
     fill: async () => { calls.push("clear"); },
     focus: async (_options?: { signal?: AbortSignal }) => { calls.push("focus"); },
+    evaluate: async () => ({ text: "@codex", focused: true }),
     pressSequentially: async (value: string) => {
       expect(value).toBe("@codex");
       calls.push("type");
@@ -1504,6 +1532,7 @@ test("connector verification preserves the host-refreshed catalog evidence", asy
     fill: async () => { calls.push("clear"); },
     focus: async () => { calls.push("focus"); },
     pressSequentially: async () => { calls.push("type"); },
+    evaluate: async () => ({ text: "@codex", focused: true }),
   };
   const selectedComposer = { selected: true };
   const page = {
@@ -1544,7 +1573,7 @@ test("connector verification preserves the host-refreshed catalog evidence", asy
   const fixture = {
     config: { appName: "Codex Jev", browserDiagnosticsPath: diagnosticsRoot },
     ensurePage: async () => page,
-    prepareTemporaryChatSurface: async () => {
+    prepareSavedChatSurface: async () => {
       prepared += 1;
       calls.push(`prepare:${prepared}`);
     },
@@ -1604,7 +1633,7 @@ for (const captureScreenshots of [false, true]) test(`connector failure persists
     await expect(verifyConnectorExclusive.call({
       config: { appName: "Codex Jev", browserDiagnosticsPath: diagnosticsRoot },
       ensurePage: async () => page,
-      prepareTemporaryChatSurface: async (_page: unknown, capture: (checkpoint: string) => Promise<void>) => {
+      prepareSavedChatSurface: async (_page: unknown, capture: (checkpoint: string) => Promise<void>) => {
         await capture("composer-ready");
       },
       selectConnector: async (_page: unknown, capture: (checkpoint: string) => Promise<void>) => {
@@ -1659,7 +1688,7 @@ test("successful connector verification clears the proven selection before relea
     const result = await verifyConnectorExclusive.call({
       config: { appName: "Codex Jev DEV", browserDiagnosticsPath: diagnosticsRoot },
       ensurePage: async () => page,
-      prepareTemporaryChatSurface: async (_page: unknown, capture: (checkpoint: string) => Promise<void>) => {
+      prepareSavedChatSurface: async (_page: unknown, capture: (checkpoint: string) => Promise<void>) => {
         calls.push("prepare");
         await capture("composer-ready");
       },
@@ -1736,6 +1765,7 @@ test("connector catalog refresh stays fail-closed for absent, legacy, and exact 
           fill: async () => {},
           focus: async () => {},
           pressSequentially: async () => {},
+          evaluate: async () => ({ text: "@codex", focused: true }),
         }),
         connectorIsSelected: async () => false,
         clearChatGptComposerState: async () => {},
@@ -1877,7 +1907,7 @@ test("tool-capable prompts use the shared Playwright connector selection before 
   ]);
 });
 
-test("an aborted connector proof clears its mention before the preflight releases the browser page", async () => {
+test("an aborted saved-chat connector selection clears its mention before releasing the browser page", async () => {
   const controller = new AbortController();
   const fillSignals: AbortSignal[] = [];
   const calls: string[] = [];
@@ -1941,14 +1971,14 @@ test("an aborted connector proof clears its mention before the preflight release
 
   await expect(selection).rejects.toMatchObject({ name: "AbortError" });
   expect(calls).toEqual([
-    "probe-fill", "focus", "type", "proof-wait", "escape", "focus",
+    "probe-fill", "probe-fill", "focus", "type", "proof-wait", "escape", "focus",
     "cleanup-select-all", "cleanup-backspace", "cleanup-read",
   ]);
-  expect(fillSignals).toHaveLength(1);
+  expect(fillSignals).toHaveLength(2);
   expect(fillSignals[0]?.aborted).toBeTrue();
   await new Promise(resolve => setTimeout(resolve, 20));
   expect(calls).toEqual([
-    "probe-fill", "focus", "type", "proof-wait", "escape", "focus",
+    "probe-fill", "probe-fill", "focus", "type", "proof-wait", "escape", "focus",
     "cleanup-select-all", "cleanup-backspace", "cleanup-read",
   ]);
 });
@@ -1979,13 +2009,14 @@ test("a lost connector mention cannot be used as evidence to change personalizat
   await expect(selectConnector.call({
     config: { appName: CHATGPT_CONNECTOR_NAME },
     activeComposer: async () => composer,
+    connectorIsSelected: async () => false,
     clearChatGptComposerState: async () => { cleanupCalls += 1; },
   }, page, async checkpoint => { checkpoints.push(checkpoint); })).rejects.toMatchObject({
     code: "prompt_attachment_integrity", retryable: false,
   });
   expect(cleanupCalls).toBe(1);
   expect(stateReads).toBe(0);
-  expect(checkpoints).toContain("personalization-proof-menu-missing");
+  expect(checkpoints).toContain("connector-mention-lost");
   expect(checkpoints).not.toContain("personalization-unpersonalized");
 });
 
@@ -3797,7 +3828,7 @@ test("the daemon prefers the browser helper that shipped beside its own entrypoi
 
 
 test("multipart observation surfaces Stopped thinking on its first observation even with live MCP work", async () => {
-  const absent = { last() { return this; }, filter() { return this; }, isVisible: async () => false };
+  const absent = { last() { return this; }, filter() { return this; }, allInnerTexts: async () => [], isVisible: async () => false };
   const page = { isClosed: () => false, locator: () => absent };
   const binding = { locator: { getByText: () => absent, getByTestId: () => absent } };
   const snapshot = { responsePresent: true, stoppedThinkingVisible: true, visibleText: "", completionActionVisible: false };

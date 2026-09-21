@@ -65,7 +65,10 @@ export async function suggestEffortTier(
     source: "The newest user request sent to a coding agent that runs on ChatGPT with a fixed reasoning-effort tier. Rate how much reasoning effort the request itself needs.",
   }, {
     difficulty: { type: "score", instructions: "How difficult is this request?", criteria: REQUEST_DIFFICULTY_LEVELS },
-  }, { timeoutMs: EFFORT_JUDGE_TIMEOUT_MS });
+  }, {
+    timeoutMs: EFFORT_JUDGE_TIMEOUT_MS,
+    validate: answers => { nearestScoreLevel(answers.difficulty, REQUEST_DIFFICULTY_LEVELS.length); },
+  });
   const level = nearestScoreLevel(answers.difficulty, REQUEST_DIFFICULTY_LEVELS.length);
   const recommended = EFFORT_TIERS[level]!;
   const gap = level - EFFORT_TIERS.indexOf(routed);

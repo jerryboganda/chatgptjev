@@ -14,6 +14,7 @@ import {
   MAX_PROMOTION_CANDIDATES,
   describeChatGptLoginState,
   judgeAnswerRootPromotion,
+  judgeStoppedThinkingLabel,
   learnStoppedThinkingLabels,
   learnedStoppedThinkingLabels,
   resetChatGptUiJudgmentsForTests,
@@ -202,6 +203,14 @@ test("only a generating verdict keeps waiting; uncertain or unavailable judgment
   expect(off.seen).toHaveLength(0);
 });
 
+test("a turn completed during review has an explicit Jev outcome before the completion fence", async () => {
+  restore = withJev(questions => {
+    const criteria = (questions.kind as { criteria: Record<string, string> }).criteria;
+    return stallChoice(Object.hasOwn(criteria, "completed") ? "completed" : "unknown")();
+  }).restore;
+  expect(await stalledTurnFailure(stalled({ running: false, completionActionVisible: true, answerTail: "The task is complete." }))).toBeUndefined();
+});
+
 const rootAnswers = (kinds: Record<string, [string, number?]>) => (questions: Record<string, unknown>) =>
   Object.fromEntries(Object.keys(questions).map(key => {
     const [kind, p = 0.9] = kinds[key] ?? ["intermediate_commentary"];
@@ -261,6 +270,30 @@ const loginPage = (text: string, url = "https://chatgpt.com/auth/login?next=%2F"
 const loginChoice = (state: string, p = 0.9) => () => ({
   state: { type: "choice", choice: state, probabilities: { [state]: p, unknown: 1 - p } },
 });
+
+for (const scenario of [
+  { name: "dialog", run: () => throwIfChatGptJudgedFailureDialog(fakePage(["Review app permissions"])), selected: "tool_confirmation", expected: undefined },
+  { name: "status labels", run: () => learnStoppedThinkingLabels(["Continuing the task"]), selected: "unused", expected: undefined },
+  { name: "single label", run: () => judgeStoppedThinkingLabel("Continuing the task"), selected: "unused", expected: false },
+  { name: "stall", run: () => stalledTurnFailure(stalled({ running: true })), selected: "still_generating", expected: undefined },
+  { name: "answer promotion", run: () => judgeAnswerRootPromotion(["The result is ready."]), selected: "final_answer", expected: "The result is ready." },
+  { name: "login", run: () => describeChatGptLoginState(loginPage("What can I help with?")), selected: "composer_ready", expected: "The composer exists but ChatGPT Jev could not find it; the ChatGPT DOM may have changed. Update ChatGPT Jev or report the issue." },
+]) {
+  test(`${scenario.name} recovers from an uncertain answer before consuming a verdict`, async () => {
+    let attempts = 0;
+    const jev = withJev(questions => {
+      attempts += 1;
+      return Object.fromEntries(Object.entries(questions).map(([id, question]) => [id,
+        (question as { type: string }).type === "boolean"
+          ? { type: "boolean", probability: attempts === 1 ? 0.5 : 0.02 }
+          : { type: "choice", choice: scenario.selected, probabilities: { [scenario.selected]: attempts === 1 ? 0.55 : 0.95, other: attempts === 1 ? 0.45 : 0.05 } },
+      ]));
+    });
+    restore = jev.restore;
+    expect(await scenario.run()).toBe(scenario.expected);
+    expect(attempts).toBe(2);
+  });
+}
 
 test("a composer-less page gets a precise instruction for the screen Jev confidently recognises", async () => {
   const jev = withJev(loginChoice("mfa_prompt"));

@@ -5,9 +5,34 @@ import {
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   CHATGPT_EFFORT_MENU_SELECTOR,
   CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
+  CHATGPT_CHAT_URL,
   activateChatGptEffortMenu,
+  assertSavedChatPage,
   detectChatGptAccountCapabilities,
 } from "../src/chatgpt-session";
+
+test("browser chat entry uses normal saved history", () => {
+  expect(CHATGPT_CHAT_URL).toBe("https://chatgpt.com/");
+});
+
+test.each([
+  "https://chatgpt.com/",
+  "https://chatgpt.com/c/12345678-1234-1234-1234-123456789abc",
+])("saved chat surfaces accept the owned page: %s", async url => {
+  await assertSavedChatPage({ url: () => url } as never);
+});
+
+test.each([
+  "https://chatgpt.com/?temporary-chat=true",
+  "https://chatgpt.com/c/12345678-1234-1234-1234-123456789abc?temporary-chat=true",
+  "https://chatgpt.com/share/12345678-1234-1234-1234-123456789abc",
+  "https://chatgpt.com.evil.example/",
+  "http://chatgpt.com/",
+  "https://other-user@chatgpt.com/",
+  "https://chatgpt.com/auth/login",
+])("saved chat surfaces reject an unsafe or temporary page: %s", async url => {
+  await expect(assertSavedChatPage({ url: () => url } as never)).rejects.toThrow();
+});
 
 test("composer and effort selectors exclude unrelated editable fields and menu buttons", () => {
   const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };

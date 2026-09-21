@@ -88,6 +88,7 @@ function latestUserRequest(parsed: CodexParsedRequest): string | undefined {
 export async function judgeCompactionHandoff(
   parsed: CodexParsedRequest,
   summary: string,
+  signal?: AbortSignal,
 ): Promise<CompactionHandoffVerdict> {
   const answers = await judge("compaction_handoff", {
     summary: summaryBody(summary),
@@ -108,7 +109,15 @@ export async function judgeCompactionHandoff(
       type: "boolean",
       instructions: "Does the summary state something the transcript tail contradicts, such as different files, decisions, results, or task status?",
     },
-  }, { timeoutMs: COMPACTION_JUDGE_TIMEOUT_MS });
+  }, {
+    timeoutMs: COMPACTION_JUDGE_TIMEOUT_MS,
+    signal,
+    validate: answers => {
+      nearestScoreLevel(answers.completeness, COMPACTION_COMPLETENESS_LEVELS.length);
+      confidentBoolean(answers.preserves_latest_user_request);
+      confidentBoolean(answers.introduces_contradiction);
+    },
+  });
   const completeness = nearestScoreLevel(answers.completeness, COMPACTION_COMPLETENESS_LEVELS.length);
   const preservesLatestUserRequest = confidentBoolean(answers.preserves_latest_user_request);
   const introducesContradiction = confidentBoolean(answers.introduces_contradiction);

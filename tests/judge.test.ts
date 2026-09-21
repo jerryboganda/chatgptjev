@@ -79,6 +79,72 @@ test("judge reports a timeout instead of falling back", async () => {
   }
 });
 
+test("validated judgments recover from uncertainty and cache only the accepted answer", async () => {
+  let calls = 0;
+  const events: JudgeEvent[] = [];
+  const restore = configureJudgeForTests({
+    enabled: true, apiKey: () => "fixture", onEvent: event => events.push(event),
+    evaluate: (async () => {
+      calls += 1;
+      const probability = calls === 1 ? 0.55 : 0.95;
+      return {
+        answers: {
+          kind: { type: "choice", choice: "a", probabilities: { a: probability, b: 1 - probability } },
+          yes: { type: "boolean", probability: 0.5 },
+        },
+        usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+      };
+    }) as never,
+  });
+  const options = { validate: (answers: { kind: Parameters<typeof confidentChoice>[0] }) => { confidentChoice(answers.kind); } };
+  try {
+    const answers = await judge("browser_status", { private_content: "fixture-only" }, QUESTIONS, options);
+    expect(confidentChoice(answers.kind)).toBe("a");
+    expect(calls).toBe(2);
+    expect((await judge("browser_status", { private_content: "fixture-only" }, QUESTIONS, options)).kind).toEqual(answers.kind);
+    expect(calls).toBe(2);
+    expect(events.map(event => event.outcome)).toEqual(["recovering", "answered", "cached"]);
+    expect(events.every(event => event.site === "browser_status")).toBeTrue();
+    expect(JSON.stringify(events)).not.toContain("fixture-only");
+  } finally {
+    restore();
+  }
+});
+
+test("persistent uncertainty is bounded, site-specific and never cached", async () => {
+  const fake = fakeEvaluate({ kind: { type: "choice", choice: "a", probabilities: { a: 0.55, b: 0.45 } } });
+  const restore = configureJudgeForTests({ evaluate: fake.fn, enabled: true, apiKey: () => "fixture" });
+  try {
+    for (let request = 1; request <= 2; request += 1) {
+      await expect(judge("stalled_turn", "same evidence", QUESTIONS, {
+        validate: answers => { confidentChoice(answers.kind); },
+      })).rejects.toThrow(/Jev is required at stalled_turn:.*uncertain/);
+      expect(fake.calls()).toBe(request * 3);
+    }
+  } finally {
+    restore();
+  }
+});
+
+test("cancellation during judgment recovery prevents another inference", async () => {
+  const controller = new AbortController();
+  const reason = new Error("owning turn stopped");
+  const fake = fakeEvaluate({ kind: { type: "choice", choice: "a", probabilities: { a: 0.55, b: 0.45 } } });
+  const restore = configureJudgeForTests({
+    evaluate: fake.fn, enabled: true, apiKey: () => "fixture",
+    onEvent: event => { if (event.outcome === "recovering") controller.abort(reason); },
+  });
+  try {
+    await expect(judge("cancelled_review", "evidence", QUESTIONS, {
+      signal: controller.signal,
+      validate: answers => { confidentChoice(answers.kind); },
+    })).rejects.toBe(reason);
+    expect(fake.calls()).toBe(1);
+  } finally {
+    restore();
+  }
+});
+
 test("judge reports provider failure without leaking its response", async () => {
   const events: JudgeEvent[] = [];
   const restore = configureJudgeForTests({

@@ -14,6 +14,7 @@ import { experimental_evaluate as evaluate } from "ai";
 export const JEV_MODEL = "typesafe-ai/jev";
 /** Total request budget, including the gateway's bounded retry. */
 export const JEV_TIMEOUT_MS = 5000;
+export const JEV_MAX_RECOVERY_ATTEMPTS = 3;
 export const JEV_API_KEY_ENV = "AI_GATEWAY_API_KEY";
 /** Choice is accepted when the top option has at least this probability ... */
 export const CHOICE_MIN_PROBABILITY = 0.7;
@@ -38,7 +39,7 @@ export class JevDecisionError extends Error {
   readonly code = "jev_decision_required";
   readonly retryable = false;
 
-  constructor(site: string, detail: string) {
+  constructor(readonly site: string, readonly detail: string, readonly recoverable = false) {
     super(`Jev is required at ${site}: ${detail}. No heuristic fallback was used.`);
     this.name = "JevDecisionError";
   }
@@ -47,8 +48,10 @@ export class JevDecisionError extends Error {
 export interface JudgeEvent {
   /** Caller-chosen id naming the decision site, e.g. "adapter_error". */
   site: string;
-  outcome: "answered" | "cached" | "disabled" | "failed" | "timeout";
+  outcome: "answered" | "cached" | "disabled" | "failed" | "timeout" | "recovering";
   elapsedMs: number;
+  attempt?: number;
+  maxAttempts?: number;
   /** Probabilities only (no judged content). */
   answers?: Record<string, unknown>;
   inputTokens?: number;
@@ -140,7 +143,11 @@ export async function judge<const Q extends JudgeQuestions>(
   site: string,
   state: JudgeState,
   questions: Q,
-  { timeoutMs = deps.timeoutMs, signal }: { timeoutMs?: number; signal?: AbortSignal } = {},
+  { timeoutMs = deps.timeoutMs, signal, validate }: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    validate?: (answers: JudgeAnswers<Q>) => void;
+  } = {},
 ): Promise<JudgeAnswers<Q>> {
   signal?.throwIfAborted();
   const started = deps.now();
@@ -155,70 +162,85 @@ export async function judge<const Q extends JudgeQuestions>(
   const key = cacheKey(site, state, questions);
   const cached = cache.get(key);
   if (cached) {
-    // LRU: re-insert so the most recently used entry is evicted last.
-    cache.delete(key);
-    cache.set(key, cached);
-    deps.onEvent({ site, outcome: "cached", elapsedMs: deps.now() - started, answers: probabilitiesOnly(cached) });
-    return cached as JudgeAnswers<Q>;
-  }
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let cancel: (() => void) | undefined;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    cancel = () => {
-      controller.abort(signal?.reason);
-      reject(signal?.reason);
-    };
-    signal?.addEventListener("abort", cancel, { once: true });
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new JevDecisionError(site, `timed out after ${timeoutMs}ms; retry the operation`));
-    }, timeoutMs);
-  });
-  try {
-    // Model id strings resolve through the AI Gateway provider, which reads the key from
-    // `AI_GATEWAY_API_KEY` in this process; the key never leaves the daemon.
-    const result = await Promise.race([
-      deadline,
-      Promise.resolve().then(() => deps.evaluate({
-        model: JEV_MODEL,
-        state,
-        questions,
-        maxRetries: 1,
-        abortSignal: controller.signal,
-      })),
-    ]);
-    signal?.throwIfAborted();
-    const answers = result.answers as Record<string, unknown>;
-    cache.set(key, answers);
-    if (cache.size > CACHE_MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
-    deps.onEvent({
-      site,
-      outcome: "answered",
-      elapsedMs: deps.now() - started,
-      answers: probabilitiesOnly(answers),
-      inputTokens: result.usage.inputTokens,
-    });
-    return result.answers;
-  } catch {
-    if (signal?.aborted) {
-      deps.onEvent({ site, outcome: "failed", elapsedMs: deps.now() - started, error: "The owning operation cancelled its required Jev judgment" });
-      throw signal.reason;
+    try {
+      validate?.(cached as JudgeAnswers<Q>);
+      cache.delete(key);
+      cache.set(key, cached);
+      deps.onEvent({ site, outcome: "cached", elapsedMs: deps.now() - started, answers: probabilitiesOnly(cached) });
+      return cached as JudgeAnswers<Q>;
+    } catch (error) {
+      if (!(error instanceof JevDecisionError)) throw error;
+      cache.delete(key);
     }
-    const aborted = controller.signal.aborted;
-    const error = new JevDecisionError(site, aborted
-      ? `timed out after ${timeoutMs}ms; retry the operation`
-      : "the gateway request failed; check Jev availability and retry the operation");
-    deps.onEvent({
-      site,
-      outcome: aborted ? "timeout" : "failed",
-      elapsedMs: deps.now() - started,
-      error: error.message,
+  }
+  const maxAttempts = validate ? JEV_MAX_RECOVERY_ATTEMPTS : 1;
+  for (let attempt = 1; ; attempt += 1) {
+    signal?.throwIfAborted();
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancel: (() => void) | undefined;
+    let validating = false;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      cancel = () => {
+        controller.abort(signal?.reason);
+        reject(signal?.reason);
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new JevDecisionError(site, `timed out after ${timeoutMs}ms; retry the operation`, true));
+      }, timeoutMs);
     });
-    throw error;
-  } finally {
-    clearTimeout(timer);
-    if (cancel) signal?.removeEventListener("abort", cancel);
+    try {
+      const result = await Promise.race([
+        deadline,
+        Promise.resolve().then(() => deps.evaluate({
+          model: JEV_MODEL,
+          state,
+          questions,
+          maxRetries: 1,
+          abortSignal: controller.signal,
+        })),
+      ]);
+      signal?.throwIfAborted();
+      validating = true;
+      validate?.(result.answers);
+      signal?.throwIfAborted();
+      const answers = result.answers as Record<string, unknown>;
+      cache.set(key, answers);
+      if (cache.size > CACHE_MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
+      deps.onEvent({
+        site,
+        outcome: "answered",
+        elapsedMs: deps.now() - started,
+        answers: probabilitiesOnly(answers),
+        inputTokens: result.usage.inputTokens,
+      });
+      return result.answers;
+    } catch (cause) {
+      if (signal?.aborted) {
+        deps.onEvent({ site, outcome: "failed", elapsedMs: deps.now() - started, error: "The owning operation cancelled its required Jev judgment" });
+        throw signal.reason;
+      }
+      if (validating && !(cause instanceof JevDecisionError)) throw cause;
+      const error = new JevDecisionError(site, validating && cause instanceof JevDecisionError
+        ? cause.detail
+        : controller.signal.aborted
+          ? `timed out after ${timeoutMs}ms; retry the operation`
+          : "the gateway request failed; check Jev availability and retry the operation", true);
+      deps.onEvent({
+        site,
+        outcome: attempt < maxAttempts ? "recovering" : controller.signal.aborted ? "timeout" : "failed",
+        elapsedMs: deps.now() - started,
+        attempt,
+        maxAttempts,
+        error: error.message,
+      });
+      if (attempt >= maxAttempts) throw error;
+    } finally {
+      clearTimeout(timer);
+      if (cancel) signal?.removeEventListener("abort", cancel);
+    }
   }
 }
 

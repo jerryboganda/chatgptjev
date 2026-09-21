@@ -150,6 +150,22 @@ test("without Jev a command cannot receive an exec verdict", async () => {
   await expect(judgeExecApproval({ cmd: "rm -rf /", sandbox_permissions: "require_escalated", justification: "cleanup" })).rejects.toThrow(/Jev.*disabled/);
 });
 
+test.each(["invocation", "output"])("native %s review recovers before permitting the result", async phase => {
+  let attempts = 0;
+  restore = withJev(questions => {
+    attempts += 1;
+    if (phase === "invocation") return exec(1, 0.5, attempts === 1 ? 0.5 : 0.01)();
+    return Object.fromEntries(Object.keys(questions).map(id => [id, { type: "boolean", probability: attempts === 1 ? 0.5 : 0.01 }]));
+  }).restore;
+  if (phase === "invocation") {
+    const payload = { arguments: { cmd: "npm test", sandbox_permissions: "use_default" } };
+    expect(await judgeNativeToolInvocation({ name: "exec_command", description: "Run command", parameters: {} }, payload)).toEqual(payload);
+  } else {
+    expect(await maskSecretsInText("Tests passed")).toBe("Tests passed");
+  }
+  expect(attempts).toBe(2);
+});
+
 test("known secret shapes are redacted deterministically before any text reaches Jev", async () => {
   const jev = withJev(questions => Object.fromEntries(Object.keys(questions).map(id => [id, { type: "boolean", probability: 0.1 }])));
   restore = jev.restore;

@@ -58,20 +58,20 @@ export async function visibleChatGptDialogTexts(
   }
 }
 
-export async function judgeChatGptDialog(text: string): Promise<DialogKind | undefined> {
+export async function judgeChatGptDialog(text: string, signal?: AbortSignal): Promise<DialogKind | undefined> {
   const answers = await judge("chatgpt_dialog", {
     dialog_text: text.slice(0, MAX_DIALOG_TEXT),
     source: "Visible text of a ChatGPT web UI alert or dialog while a coding-agent turn was running. The exact known rate-limit, expired-session, and subscription alerts have already been ruled out.",
   }, {
     kind: { type: "choice", instructions: "What is this dialog?", criteria: DIALOG_KINDS },
-  }, { timeoutMs: DIALOG_JUDGE_TIMEOUT_MS });
+  }, { timeoutMs: DIALOG_JUDGE_TIMEOUT_MS, signal, validate: answers => { confidentChoice(answers.kind); } });
   return confidentChoice(answers?.kind);
 }
 
 /** Throw a structured failure when Jev confidently recognises an error dialog the exact regexes missed. */
-export async function throwIfChatGptJudgedFailureDialog(page: ChatGptDialogTextSource): Promise<void> {
+export async function throwIfChatGptJudgedFailureDialog(page: ChatGptDialogTextSource, signal?: AbortSignal): Promise<void> {
   for (const text of await visibleChatGptDialogTexts(page)) {
-    const kind = await judgeChatGptDialog(text);
+    const kind = await judgeChatGptDialog(text, signal);
     const failure = kind && DIALOG_FAILURES[kind];
     if (!failure) continue;
     // Item 11: the account limit is per account, not per turn; clamp concurrency for every caller.
@@ -94,7 +94,7 @@ const normalizeLabel = (value: string): string => value.replace(/\s+/g, " ").tri
  * Await every unknown status judgment before continuing observation. Successful judgments are
  * remembered for identical labels; failures are never cached as permission to continue.
  */
-export async function learnStoppedThinkingLabels(statusTexts: readonly string[]): Promise<void> {
+export async function learnStoppedThinkingLabels(statusTexts: readonly string[], signal?: AbortSignal): Promise<void> {
   const labels = [...new Set(statusTexts.map(normalizeLabel))].filter(label => label
     && !knownStoppedLabels.has(label) && !learnedStoppedThinkingLabels.has(label) && !judgedStatusLabels.has(label));
   for (let offset = 0; offset < labels.length; offset += STATUS_LABEL_BATCH_SIZE) {
@@ -105,7 +105,10 @@ export async function learnStoppedThinkingLabels(statusTexts: readonly string[])
     }, Object.fromEntries(batch.map((_label, index) => [`label_${index}`, {
       type: "boolean" as const,
       instructions: `Does labels[${index}] state that thinking or reasoning stopped or was interrupted, rather than ongoing work or an answer being completed?`,
-    }])));
+    }])), {
+      signal,
+      validate: answers => { batch.forEach((_label, index) => confidentBoolean(answers[`label_${index}`])); },
+    });
     const verdicts = batch.map((_label, index) => confidentBoolean(answers[`label_${index}`]));
     batch.forEach((label, index) => {
       if (judgedStatusLabels.size >= MAX_JUDGED_LABELS) judgedStatusLabels.clear();
@@ -115,7 +118,7 @@ export async function learnStoppedThinkingLabels(statusTexts: readonly string[])
   }
 }
 
-export async function judgeStoppedThinkingLabel(label: string): Promise<boolean | undefined> {
+export async function judgeStoppedThinkingLabel(label: string, signal?: AbortSignal): Promise<boolean | undefined> {
   const answers = await judge("stopped_thinking_label", {
     status_label: label,
     known_examples: ["Stopped thinking", "Denken gestoppt", "思考を停止しました"],
@@ -125,7 +128,7 @@ export async function judgeStoppedThinkingLabel(label: string): Promise<boolean 
       type: "boolean",
       instructions: "`status_label` states that the model's thinking/reasoning was stopped or interrupted (a terminal state), not that it is thinking, searching, working, or done answering.",
     },
-  });
+  }, { signal, validate: answers => { confidentBoolean(answers.stopped); } });
   return confidentBoolean(answers?.stopped);
 }
 
@@ -140,6 +143,7 @@ export function resetChatGptUiJudgmentsForTests(): void {
 
 export const STALL_KINDS = {
   still_generating: "ChatGPT is still working: thinking, searching, running a tool, or streaming text; status labels describe ongoing activity.",
+  completed: "ChatGPT finished its answer normally: the stop button is gone, completed-turn actions are visible, and answer text exists. This is not an interrupted response or ongoing activity.",
   stopped_by_ui: "Generation was stopped or interrupted by the UI (a stopped/interrupted status, a regenerate prompt) without an error message.",
   errored: "ChatGPT reported a failure for this turn: something went wrong, a network or server error, or a request to retry.",
   rate_limited: "The turn was blocked by a rate limit, cooldown, or usage cap.",
@@ -162,7 +166,7 @@ export const MAX_STALL_ANSWER_TAIL = 400;
 const MAX_STALL_TEXTS = 12;
 const STALL_JUDGE_TIMEOUT_MS = 2_500;
 
-export async function judgeStalledTurn(evidence: StalledTurnEvidence): Promise<StallKind | undefined> {
+export async function judgeStalledTurn(evidence: StalledTurnEvidence, signal?: AbortSignal): Promise<StallKind | undefined> {
   const answers = await judge("stalled_turn", {
     seconds_without_completion: Math.round(evidence.elapsedSec),
     stop_button_visible: evidence.running,
@@ -173,7 +177,15 @@ export async function judgeStalledTurn(evidence: StalledTurnEvidence): Promise<S
     source: "A ChatGPT web turn driven by a coding agent has not completed for a while. The evidence is what the page shows right now; the exact known error dialogs and stopped-thinking labels have already been ruled out.",
   }, {
     kind: { type: "choice", instructions: "What is this turn doing?", criteria: STALL_KINDS },
-  }, { timeoutMs: STALL_JUDGE_TIMEOUT_MS });
+  }, {
+    timeoutMs: STALL_JUDGE_TIMEOUT_MS,
+    signal,
+    validate: answers => {
+      if (confidentChoice(answers.kind) === "unknown") {
+        throw new JevDecisionError("stalled_turn", "the turn state is uncertain; inspect the ChatGPT page", true);
+      }
+    },
+  });
   return confidentChoice(answers?.kind);
 }
 
@@ -181,9 +193,9 @@ export async function judgeStalledTurn(evidence: StalledTurnEvidence): Promise<S
  * Continue only when Jev says the turn is still generating. Unknown state is reported explicitly;
  * a stale stop button does not override a completed semantic judgment.
  */
-export async function stalledTurnFailure(evidence: StalledTurnEvidence): Promise<ChatGptWebAdapterError | undefined> {
-  const kind = await judgeStalledTurn(evidence);
-  if (kind === "still_generating") return undefined;
+export async function stalledTurnFailure(evidence: StalledTurnEvidence, signal?: AbortSignal): Promise<ChatGptWebAdapterError | undefined> {
+  const kind = await judgeStalledTurn(evidence, signal);
+  if (kind === "still_generating" || kind === "completed") return undefined;
   if (!kind || kind === "unknown") throw new JevDecisionError("stalled_turn", "the turn state is uncertain; inspect the ChatGPT page");
   const excerpt = [...evidence.overlayTexts, ...evidence.statusTexts].map(normalizeLabel).filter(Boolean).join(" | ").slice(0, 200);
   const shown = excerpt ? ` ChatGPT showed: "${excerpt}".` : "";
@@ -219,7 +231,7 @@ const PROMOTION_JUDGE_TIMEOUT_MS = 3_000;
  * Returns the normalized text of the last commentary root Jev confidently reads as the final
  * answer, or undefined. Every nonempty root is judged in bounded batches.
  */
-export async function judgeAnswerRootPromotion(commentaryTexts: readonly string[]): Promise<string | undefined> {
+export async function judgeAnswerRootPromotion(commentaryTexts: readonly string[], signal?: AbortSignal): Promise<string | undefined> {
   const candidates = commentaryTexts.map(normalizeLabel).filter(Boolean);
   let promoted: string | undefined;
   for (let offset = 0; offset < candidates.length; offset += MAX_PROMOTION_CANDIDATES) {
@@ -232,7 +244,11 @@ export async function judgeAnswerRootPromotion(commentaryTexts: readonly string[
       turn_finished: true,
       blocks,
       source: "ChatGPT finished generating (stop button gone) but the page shows only Markdown blocks the DOM rule classified as intermediate commentary; no block is positioned as the final answer. Decide what each block really is.",
-    }, questions, { timeoutMs: PROMOTION_JUDGE_TIMEOUT_MS });
+    }, questions, {
+      timeoutMs: PROMOTION_JUDGE_TIMEOUT_MS,
+      signal,
+      validate: answers => { blocks.forEach(block => confidentChoice(answers[`root_${block.index}`])); },
+    });
     for (const block of blocks) {
       if (confidentChoice(answers[`root_${block.index}`]) === "final_answer") promoted = block.text;
     }
@@ -273,7 +289,7 @@ export interface ChatGptLoginPageSource {
 }
 
 /** Required guidance for a page without a composer; unreadable or uncertain state stops explicitly. */
-export async function describeChatGptLoginState(page: ChatGptLoginPageSource): Promise<string | undefined> {
+export async function describeChatGptLoginState(page: ChatGptLoginPageSource, signal?: AbortSignal): Promise<string | undefined> {
   const text = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
   const url = (() => { try { return page.url(); } catch { return ""; } })();
   if (!text.trim() && !url) throw new JevDecisionError("chatgpt_login_state", "the page could not be read");
@@ -283,7 +299,7 @@ export async function describeChatGptLoginState(page: ChatGptLoginPageSource): P
     source: "Visible text of a chatgpt.com page opened by an automation that expected the signed-in chat composer but did not find it.",
   }, {
     state: { type: "choice", instructions: "What is this page showing?", criteria: LOGIN_STATES },
-  }, { timeoutMs: LOGIN_JUDGE_TIMEOUT_MS });
+  }, { timeoutMs: LOGIN_JUDGE_TIMEOUT_MS, signal, validate: answers => { confidentChoice(answers.state); } });
   const state = confidentChoice(answers?.state);
   if (state === "unknown") throw new JevDecisionError("chatgpt_login_state", "the page state is uncertain; inspect the login window");
   return LOGIN_GUIDANCE[state];

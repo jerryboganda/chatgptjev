@@ -35,7 +35,7 @@ export class ChatGptWidgetFilter {
 
   constructor(private readonly onDrop: (excerpt: string) => void = () => {}) {}
 
-  async filter(segments: ChatGptMarkdownSegment[]): Promise<ChatGptMarkdownSegment[]> {
+  async filter(segments: ChatGptMarkdownSegment[], signal?: AbortSignal): Promise<ChatGptMarkdownSegment[]> {
     const blocks = segments.map(segment => ({ segment, identity: JSON.stringify([segment.tag, segment.text, segment.html]) }));
     const decisions = new Map(this.verdicts);
     const pending = [...new Map(
@@ -47,13 +47,23 @@ export class ChatGptWidgetFilter {
         `block_${index}`,
         {
           type: "boolean",
-          instructions: `Is block ${index} part of the assistant's answer content (its prose, code, lists, tables, or link text), as opposed to UI chrome such as control labels, widget status or loading text, or renderer scaffolding?`,
+          instructions: `Is block ${index} authored assistant answer content rather than an actual UI control or renderer status? Use its HTML structure and hasInteractiveMarkup as evidence, not status-like wording alone. Ordinary paragraphs, code, lists, tables and links are answers, including short acknowledgements, uppercase literals, readiness phrases and exact-match replies. Reject actual widget controls, loading indicators and renderer scaffolding. Interactive markup is a clue, not proof: meaningful answer content inside a rich card still belongs to the answer.`,
         },
       ] as const)) as Record<string, { type: "boolean"; instructions: string }>;
       const answers = await judge("answer_widget", {
-        blocks: batch.map(({ segment }, index) => ({ index, tag: segment.tag ?? "root", text: segment.text, html: segment.html })),
-        source: "All text-bearing blocks extracted from a ChatGPT assistant message. Real answer text must reach the user; widget controls and status text must not.",
-      }, questions, { timeoutMs: WIDGET_JUDGE_TIMEOUT_MS });
+        blocks: batch.map(({ segment }, index) => ({
+          index,
+          tag: segment.tag ?? "root",
+          text: segment.text,
+          html: segment.html,
+          hasInteractiveMarkup: WIDGET_MARKUP_PATTERN.test(segment.html),
+        })),
+        source: "Blocks extracted from the assistant answer's Markdown roots after known UI chrome was removed. The assistant may have been asked for a literal readiness or status phrase; that wording alone does not make a paragraph UI chrome.",
+      }, questions, {
+        timeoutMs: WIDGET_JUDGE_TIMEOUT_MS,
+        signal,
+        validate: answers => { batch.forEach((_block, index) => confidentBoolean(answers[`block_${index}`])); },
+      });
       batch.forEach(({ segment, identity }, index) => {
         const keep = confidentBoolean(answers[`block_${index}`]);
         decisions.set(identity, keep);

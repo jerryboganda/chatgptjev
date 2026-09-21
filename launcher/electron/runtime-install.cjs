@@ -215,6 +215,127 @@ async function waitForPackagedRuntimeSource({
   throw new Error(`Packaged runtime did not fully materialize within ${timeoutMs}ms: ${detail}`);
 }
 
+function findReusableInstalledRuntime(destination, expectedIdentity) {
+  if (!fs.existsSync(destination)) return null;
+  let currentValid = false;
+  try {
+    validateRuntimeBundle(destination, expectedIdentity);
+    currentValid = true;
+  } catch {
+    // A terminated installer or external cleanup can leave a version directory present but
+    // incomplete. Rebuild the launcher-owned bundle transactionally from the signed package.
+  }
+  if (currentValid) {
+    return { root: destination, locked: !safeToColdRenameDirectory(destination) };
+  }
+  return safeToColdRenameDirectory(destination) ? { root: null, locked: false } : { root: destination, locked: true };
+}
+
+function isTransientRenameError(error) {
+  return Boolean(error) && ["EPERM", "EACCES", "EBUSY"].includes(error?.code);
+}
+
+function safeToColdRenameDirectory(directory) {
+  if (!fs.existsSync(directory)) return true;
+  let probe;
+  try {
+    probe = `${directory}.rename-probe-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    fs.renameSync(directory, probe);
+    fs.renameSync(probe, directory);
+    return true;
+  } catch (error) {
+    try {
+      if (probe && fs.existsSync(probe) && !fs.existsSync(directory)) {
+        fs.renameSync(probe, directory);
+      }
+    } catch {}
+    if (isTransientRenameError(error)) return false;
+    return false;
+  }
+}
+
+function sweepStaleTransients(versionsRoot, baseName) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(versionsRoot);
+  } catch {
+    return;
+  }
+  const now = Date.now();
+  for (const entry of entries) {
+    if (entry !== `${baseName}.tmp` && !entry.startsWith(`${baseName}.tmp-`)
+      && !entry.startsWith(`${baseName}.previous-`)) {
+      continue;
+    }
+    const candidate = path.join(versionsRoot, entry);
+    let age = Number.POSITIVE_INFINITY;
+    const match = /(?:^|\D)(\d{10,})($|[^0-9])/g.exec(entry);
+    if (match) {
+      const stamp = Number(match[1]);
+      const digits = match[1].length;
+      age = digits === 13 ? now - stamp : now - stamp * 1000;
+    }
+    if (age < 30_000 && entry.includes(`${process.pid}`)) continue;
+    try {
+      fs.rmSync(candidate, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+function fallbackInstallations(versionsRoot, baseName) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(versionsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter(entry => entry.isDirectory()
+      && entry.name !== baseName
+      && !entry.name.startsWith(`${baseName}.tmp`)
+      && !entry.name.startsWith(`${baseName}.previous-`)
+      && entry.name.startsWith(`${baseName}.fallback-`))
+    .map(entry => path.join(versionsRoot, entry.name))
+    .sort();
+}
+
+function findStaleFallbackCandidate(versionsRoot, baseName, expectedIdentity) {
+  for (const candidate of fallbackInstallations(versionsRoot, baseName)) {
+    try {
+      validateRuntimeBundle(candidate, expectedIdentity);
+    } catch {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function findFreshFallbackCandidate(versionsRoot, baseName, expectedIdentity) {
+  for (const candidate of fallbackInstallations(versionsRoot, baseName)) {
+    try {
+      return validateRuntimeBundle(candidate, expectedIdentity);
+    } catch {}
+  }
+  return null;
+}
+
+function installSideBySideFallback({ source, versionsRoot, baseName, expectedIdentity }) {
+  const fallback = `${path.join(versionsRoot, baseName)}.fallback-${process.pid}-${Date.now()}`;
+  try {
+    if (fs.existsSync(fallback)) fs.rmSync(fallback, { recursive: true, force: true });
+    fs.cpSync(source, fallback, {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+      verbatimSymlinks: true,
+    });
+    return validateRuntimeBundle(fallback, expectedIdentity);
+  } catch {
+    try { fs.rmSync(fallback, { recursive: true, force: true }); } catch {}
+    return null;
+  }
+}
+
 function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
   if (!app.isPackaged) return null;
   const identity = {
@@ -226,20 +347,22 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
   const sourceBundle = inspectRuntimeBundle(source, identity);
   const expectedIdentity = { ...identity, bundleId: sourceBundle.manifest.bundleId };
   const versionsRoot = path.join(coreHome, "versions");
-  const destination = path.join(
-    versionsRoot,
-    `${identity.version}-${identity.platform}-${identity.arch}`,
-  );
-  if (fs.existsSync(destination)) {
+  const baseName = `${identity.version}-${identity.platform}-${identity.arch}`;
+  const destination = path.join(versionsRoot, baseName);
+  const reusable = findReusableInstalledRuntime(destination, expectedIdentity);
+  if (reusable?.locked) {
     try {
-      return validateRuntimeBundle(destination, expectedIdentity);
+      return validateRuntimeBundle(reusable.root, expectedIdentity);
     } catch {
-      // A terminated installer or external cleanup can leave a version directory present but
-      // incomplete. Rebuild the launcher-owned bundle transactionally from the signed package.
+      // The locked directory no longer matches this release: another live launcher owns it.
+      // Fall through to a side-by-side fallback instead of crashing startup with EPERM.
     }
+  } else if (reusable?.root) {
+    return reusable.root;
   }
 
   fs.mkdirSync(versionsRoot, { recursive: true, mode: 0o700 });
+  sweepStaleTransients(versionsRoot, baseName);
   const temporary = `${destination}.tmp-${process.pid}-${Date.now()}`;
   const previous = `${destination}.previous-${process.pid}-${Date.now()}`;
   let previousMoved = false;
@@ -251,6 +374,37 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
       verbatimSymlinks: true,
     });
     validateRuntimeBundle(temporary, expectedIdentity);
+    if (!safeToColdRenameDirectory(destination)) {
+      fs.rmSync(temporary, { recursive: true, force: true });
+      const staleCandidate = findStaleFallbackCandidate(
+        versionsRoot, baseName, expectedIdentity,
+      );
+      if (staleCandidate) {
+        try {
+          fs.rmSync(staleCandidate, { recursive: true, force: true });
+        } catch {}
+      }
+      const fallback = findFreshFallbackCandidate(versionsRoot, baseName, expectedIdentity)
+        ?? installSideBySideFallback({ source, versionsRoot, baseName, expectedIdentity });
+      if (fallback) {
+        return fallback;
+      }
+      if (fs.existsSync(destination)) {
+        try {
+          return validateRuntimeBundle(destination, expectedIdentity);
+        } catch (validationError) {
+          throw new Error(
+            `Installed runtime is in use by another process and cannot be replaced right now: ${
+              validationError instanceof Error ? validationError.message : String(validationError)
+            }. Close the other ChatGPT Jev window or retry once it exits, then launch again.`,
+          );
+        }
+      }
+      throw new Error(
+        "Installed runtime is in use by another process and cannot be replaced right now. "
+        + "Close the other ChatGPT Jev window or retry once it exits, then launch again.",
+      );
+    }
     if (fs.existsSync(destination)) {
       renameAtomicFile(destination, previous);
       previousMoved = true;

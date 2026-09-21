@@ -132,3 +132,16 @@ test("uncertain, failed, or disabled Jev cannot approve a summary", async () => 
   await expect(judgeCompactionHandoff(request, summary)).rejects.toThrow(/Jev.*disabled/);
   expect(disabled.states).toHaveLength(0);
 });
+
+test("compaction retries an uncertain review without accepting or caching it", async () => {
+  let attempts = 0;
+  const jev = withJev(() => {
+    attempts += 1;
+    return verdict(2.8, attempts === 1 ? 0.55 : 0.95, 0.05)();
+  });
+  restore = jev.restore;
+  expect((await judgeCompactionHandoff(request, summary)).acceptable).toBeTrue();
+  expect(attempts).toBe(2);
+  expect((await judgeCompactionHandoff(request, summary)).acceptable).toBeTrue();
+  expect(attempts).toBe(2);
+});

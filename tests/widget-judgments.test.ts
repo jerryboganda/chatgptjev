@@ -136,3 +136,23 @@ test("an uncertain widget verdict is not cached as approved content", async () =
   restore = withJev({ [widget.text]: 0.5 }).restore;
   await expect(new ChatGptWidgetFilter().filter([widget])).rejects.toThrow(/Jev.*uncertain/);
 });
+
+test("literal readiness replies carry structural evidence distinct from widget status text", async () => {
+  const reply = segment("0:p", "p", "<p>CODEX WEB GPT READY</p>", "CODEX WEB GPT READY", false);
+  const status = segment("1:div", "div", '<div role="status">CODEX WEB GPT READY</div>', reply.text, false);
+  restore = configureJudgeForTests({
+    enabled: true,
+    apiKey: () => "test-key",
+    evaluate: (async (options: { state: { blocks: Array<{ index: number; hasInteractiveMarkup?: boolean }> } }) => ({
+      answers: Object.fromEntries(options.state.blocks.map(block => [
+        `block_${block.index}`,
+        { type: "boolean", probability: block.hasInteractiveMarkup === false ? 0.99 : 0.01 },
+      ])),
+      usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+    })) as never,
+  });
+
+  const kept = await new ChatGptWidgetFilter().filter([reply, status]);
+
+  expect(kept).toEqual([reply]);
+});

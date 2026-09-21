@@ -10,7 +10,94 @@ import { observeMcpToolCalls } from "../src/adapters/chatgpt-web/mcp-observation
 import { runChatGptMcpServer } from "../src/adapters/chatgpt-web/mcp-server";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
-import { configureJudgeForTests } from "../src/lib/judge";
+import { configureJudgeForTests, JevDecisionError } from "../src/lib/judge";
+
+for (const [reviewPhase, cancelled] of [
+  ["invocation", false], ["output", false], ["invocation", true], ["output", true],
+] as const) {
+  const behavior = cancelled
+    ? "caller cancellation retires the turn even with a Jev error reason"
+    : "failure preserves the live MCP turn without releasing unreviewed output";
+  test(`required ${reviewPhase} review ${behavior}`, async () => {
+    const socketPath = defaultBrokerEndpoint(join(tmpdir(), `jev-mcp-review-${reviewPhase}-${process.pid}-${Date.now()}`));
+    const broker = TurnBroker.forSocket(socketPath);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const originalConnect = McpServer.prototype.connect;
+    let server: McpServer | undefined;
+    const connect = spyOn(McpServer.prototype, "connect").mockImplementation(async function(this: McpServer) {
+      server = this;
+      await originalConnect.call(this, serverTransport);
+    });
+    let rejectReview = true;
+    const cancellation = new AbortController();
+    const originalAny = AbortSignal.any.bind(AbortSignal);
+    const composeSignal = cancelled ? spyOn(AbortSignal, "any").mockImplementation(signals => (
+      originalAny([...signals, cancellation.signal])
+    )) : undefined;
+    const restoreJudge = configureJudgeForTests({
+      enabled: true, apiKey: () => "fixture",
+      evaluate: (async ({ questions }: { questions: Record<string, unknown> }) => {
+        const invocation = "command_risk" in questions;
+        const uncertain = rejectReview && (invocation ? reviewPhase === "invocation" : reviewPhase === "output");
+        if (uncertain && cancelled) cancellation.abort(new JevDecisionError("fixture", "caller cancelled the review"));
+        const answers = invocation
+          ? { command_risk: { type: "score", score: 0 }, injected_instructions: { type: "boolean", probability: uncertain ? 0.5 : 0.01 } }
+          : Object.fromEntries(Object.keys(questions).map(key => [key, { type: "boolean", probability: uncertain ? 0.5 : 0.01 }]));
+        return { answers, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+      }) as never,
+    });
+    const client = new Client({ name: "review-recovery-test", version: "1" });
+    try {
+      await runChatGptMcpServer({ brokerSocketPath: socketPath });
+      await client.connect(clientTransport);
+      const token = await broker.register({
+        cwd: tmpdir(), roots: [tmpdir()], writableRoots: [], sandboxPolicy: { type: "readOnly", networkAccess: false },
+        tools: [{ name: "exec_command", description: "Read a fixture", parameters: { type: "object" } }],
+      });
+      const firstReply = client.callTool({ name: "codex_exec", arguments: { turn_token: token, cmd: "first fixture" } });
+      if (reviewPhase === "output") {
+        const [request] = await broker.nextToolBatch(token, AbortSignal.timeout(1_000));
+        broker.completeTool(token, request!.callId, { content: [{ type: "text", text: "UNREVIEWED_PRIVATE_RESULT" }] });
+      }
+      const refused = await firstReply;
+      composeSignal?.mockRestore();
+      expect(refused.isError).toBeTrue();
+      expect(JSON.stringify(refused)).not.toContain("UNREVIEWED_PRIVATE_RESULT");
+
+      const inventory = await client.callTool({
+        name: "codex_tool_inventory",
+        arguments: { turn_token: token, query: "exec_command", include_schema: false },
+      });
+      if (cancelled) {
+        expect(inventory.isError).toBeTrue();
+        expect(JSON.stringify(inventory)).toContain("already finished");
+        return;
+      }
+      expect(inventory.isError).not.toBe(true);
+      expect(refused.structuredContent).toMatchObject({
+        code: "jev_decision_required",
+        execution_state: reviewPhase === "output" ? "completed" : "not_started",
+        retryable: false,
+      });
+
+      rejectReview = false;
+      const nextReply = client.callTool({ name: "codex_exec", arguments: { turn_token: token, cmd: "next fixture" } });
+      const [nextRequest] = await broker.nextToolBatch(token, AbortSignal.timeout(1_000));
+      expect(nextRequest?.arguments?.cmd).toBe("next fixture");
+      broker.completeTool(token, nextRequest!.callId, { content: [{ type: "text", text: "REVIEWED_RESULT" }] });
+      const accepted = await nextReply;
+      expect(accepted.isError).not.toBe(true);
+      expect(accepted.content).toEqual([{ type: "text", text: "REVIEWED_RESULT" }]);
+    } finally {
+      composeSignal?.mockRestore();
+      connect.mockRestore();
+      restoreJudge();
+      await client.close();
+      await server?.close();
+      await broker.close();
+    }
+  });
+}
 
 test("MCP shares one deadline across native review, execution and delayed output batches", async () => {
   const socketPath = defaultBrokerEndpoint(join(process.platform === "win32" ? tmpdir() : "/tmp", `jev-mcp-${process.pid}-${Date.now()}`));
