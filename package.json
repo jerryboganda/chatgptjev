@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-jev",
-  "version": "5.0.12",
+  "version": "5.0.13",
   "private": true,
   "description": "ChatGPT Jev: a Jev-hardened local Responses bridge that runs Codex tasks through a user-authenticated ChatGPT web session.",
   "repository": {
