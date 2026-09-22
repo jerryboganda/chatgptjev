@@ -79,7 +79,9 @@ for (const [reviewPhase, cancelled] of [
       expect(refused.structuredContent).toMatchObject({
         code: "jev_decision_required",
         execution_state: reviewPhase === "output" ? "completed" : "not_started",
-        retryable: false,
+        // Graceful: a tool that never ran is only waiting for its review, so the
+        // model may retry the same call; a withheld result must never repeat.
+        retryable: reviewPhase !== "output",
       });
 
       rejectReview = false;

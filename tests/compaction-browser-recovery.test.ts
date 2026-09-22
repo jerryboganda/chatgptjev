@@ -213,7 +213,9 @@ test.each(["recovers", "cancelled", "deadline", "upstream error", "stalled revie
       if (outcome === "upstream error") expect(failure?.code).toBe("upstream_server_error");
       expect(delivered).toEqual([]);
     }
-    expect(notices.filter(text => text.includes("Waiting for required Jev review"))).toHaveLength(["active progress", "late successful review"].includes(outcome) ? 0 : 1);
+    // Graceful judgments retry inside their own budget, so the deadline case expires
+    // the turn before any review pause is announced; only fast-failing outcomes pause.
+    expect(notices.filter(text => text.includes("Waiting for required Jev review"))).toHaveLength(["active progress", "late successful review", "deadline"].includes(outcome) ? 0 : 1);
     expect(sends).toBe(1);
     expect(released).toBeTrue();
   } finally {

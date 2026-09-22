@@ -12,9 +12,14 @@ import { experimental_evaluate as evaluate } from "ai";
  *   `onJudgeEvent` receives probabilities and ids only, never the judged content.
  */
 export const JEV_MODEL = "typesafe-ai/jev";
-/** Total request budget, including the gateway's bounded retry. */
-export const JEV_TIMEOUT_MS = 5000;
+/** Total judgment budget: enough room for a brief gateway outage to clear instead of failing a turn. */
+export const JEV_TIMEOUT_MS = 20_000;
+/** Attempts inside one budget: bounded patience, never an unbounded retry loop. */
 export const JEV_MAX_RECOVERY_ATTEMPTS = 3;
+/** Polite pause between attempts; grows by this step per attempt. */
+export const JEV_RETRY_BASE_DELAY_MS = 500;
+/** Floor on the time a retry attempt must still have to be started. */
+export const JEV_RETRY_MIN_REMAINING_MS = 250;
 export const JEV_API_KEY_ENV = "AI_GATEWAY_API_KEY";
 /** Choice is accepted when the top option has at least this probability ... */
 export const CHOICE_MIN_PROBABILITY = 0.7;
@@ -63,6 +68,8 @@ export interface JudgeDependencies {
   enabled: boolean;
   apiKey: () => string | undefined;
   timeoutMs: number;
+  /** Delay before retry attempt N (1-based) when the failure looks transient. */
+  retryDelayMs: (attempt: number) => number;
   onEvent: (event: JudgeEvent) => void;
   now: () => number;
 }
@@ -73,6 +80,7 @@ const deps: JudgeDependencies = {
   enabled: process.env.NODE_ENV !== "test",
   apiKey: () => process.env[JEV_API_KEY_ENV]?.trim() || undefined,
   timeoutMs: JEV_TIMEOUT_MS,
+  retryDelayMs: attempt => JEV_RETRY_BASE_DELAY_MS * attempt,
   onEvent: () => {},
   now: () => performance.now(),
 };
@@ -176,6 +184,14 @@ export async function judge<const Q extends JudgeQuestions>(
   const maxAttempts = validate ? JEV_MAX_RECOVERY_ATTEMPTS : 1;
   for (let attempt = 1; ; attempt += 1) {
     signal?.throwIfAborted();
+    // The budget is total: each attempt draws down the same deadline, so retries
+    // can never exceed the caller's ceiling. A hopeless remainder is not started.
+    const remainingMs = Math.max(1, timeoutMs - (deps.now() - started));
+    if (attempt > 1 && remainingMs < JEV_RETRY_MIN_REMAINING_MS) {
+      const error = new JevDecisionError(site, `timed out after ${timeoutMs}ms; retry the operation`, true);
+      deps.onEvent({ site, outcome: "timeout", elapsedMs: deps.now() - started, error: error.message });
+      throw error;
+    }
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cancel: (() => void) | undefined;
@@ -189,8 +205,26 @@ export async function judge<const Q extends JudgeQuestions>(
       timer = setTimeout(() => {
         controller.abort();
         reject(new JevDecisionError(site, `timed out after ${timeoutMs}ms; retry the operation`, true));
-      }, timeoutMs);
+      }, remainingMs);
     });
+    // A settled race leaves the deadline promise pending until the budget fires;
+    // swallow that late rejection so it can never surface as unhandled.
+    deadline.catch(() => {});
+    if (attempt > 1) {
+      // Grace period: a polite pause before retrying, capped at half the remaining
+      // budget so a tight caller ceiling still leaves room for the next attempt,
+      // and immediately responsive to caller cancellation.
+      let delayTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          deadline,
+          new Promise<void>(settle => { delayTimer = setTimeout(settle, Math.min(deps.retryDelayMs(attempt - 1), Math.floor(remainingMs / 2))); }),
+        ]);
+      } finally {
+        clearTimeout(delayTimer);
+      }
+      signal?.throwIfAborted();
+    }
     try {
       const result = await Promise.race([
         deadline,

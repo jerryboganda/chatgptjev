@@ -574,15 +574,19 @@ export async function runChatGptMcpServer(options: {
       return await maskSecretsInToolResult(asMcpResult(response), operationSignal);
     } catch (error) {
       if (error instanceof JevDecisionError && !operationSignal.aborted && executionState !== "pending") {
+        const nativeToolRan = executionState === "completed";
         console.error(`[chatgpt-web-mcp] required review failed for ${wireName(tool)}; execution=${executionState}; turn preserved`);
         return result({
           code: error.code,
           tool: wireName(tool),
           execution_state: executionState,
-          retryable: false,
-          message: error.message + (executionState === "completed"
+          // Graceful: when the native tool never ran, the operation is only waiting
+          // for its review — the model may retry the same call as-is. Only a withheld
+          // result (the tool already ran) must not be silently repeated.
+          retryable: !nativeToolRan,
+          message: error.message + (nativeToolRan
             ? " The native tool already completed; its output was withheld. Do not repeat the native operation. Restore Jev before continuing."
-            : " The native tool was not run. Restore Jev review before retrying this operation."),
+            : " The native tool was not run. The required review is temporarily unavailable; wait a moment and retry this same operation."),
         }, true);
       }
       const timedOut = error instanceof TurnBrokerTimeoutError || operationSignal.reason instanceof TurnBrokerTimeoutError;
