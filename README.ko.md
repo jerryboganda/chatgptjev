@@ -38,13 +38,7 @@ Full harness 모드는 MCP를 통해 ChatGPT를 현재 작업의 파일, 터미�
 <details>
 <summary><strong>터미널 설치, 업데이트 및 복구</strong></summary>
 
-업데이트 전에 런처를 종료하세요. 아래 설치 프로그램은 플랫폼과 아키텍처를 선택하고 공개된 체크섬을 검증하며 ChatGPT 프로필과 런처 설정을 보존합니다.
-
-**macOS / Linux**
-
-```bash
-curl -fsSL https://github.com/jerryboganda/chatgptjev/releases/latest/download/install-launcher.sh | sh
-```
+업데이트 전에 런처를 종료하세요. 아래 설치 프로그램은 공개된 체크섬을 검증하며 ChatGPT 프로필과 런처 설정을 보존합니다.
 
 **Windows PowerShell**
 

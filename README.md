@@ -50,13 +50,7 @@ without a release, include `[skip-release]` in the commit message.
 <details>
 <summary><strong>Terminal install, updates & repair</strong></summary>
 
-Quit the launcher before updating. These installers select the platform and architecture, verify the published checksums, and preserve your ChatGPT profile and launcher settings.
-
-**macOS / Linux**
-
-```bash
-curl -fsSL https://github.com/jerryboganda/chatgptjev/releases/latest/download/install-launcher.sh | sh
-```
+Quit the launcher before updating. The installer verifies the published checksums and preserves your ChatGPT profile and launcher settings.
 
 **Windows PowerShell**
 

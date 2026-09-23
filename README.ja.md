@@ -38,13 +38,7 @@ Full ハーネスモードでは、MCP を通じて ChatGPT を現在のタス�
 <details>
 <summary><strong>ターミナルからのインストール・更新・修復</strong></summary>
 
-更新前にランチャーを終了してください。以下のインストーラーは OS とアーキテクチャを選択し、公開チェックサムを検証します。ChatGPT プロファイルとランチャー設定は保持されます。
-
-**macOS / Linux**
-
-```bash
-curl -fsSL https://github.com/jerryboganda/chatgptjev/releases/latest/download/install-launcher.sh | sh
-```
+更新前にランチャーを終了してください。以下のインストーラーは公開チェックサムを検証します。ChatGPT プロファイルとランチャー設定は保持されます。
 
 **Windows PowerShell**
 

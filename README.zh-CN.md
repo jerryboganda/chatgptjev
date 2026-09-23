@@ -38,13 +38,7 @@
 <details>
 <summary><strong>命令行安装、更新与修复</strong></summary>
 
-更新前请退出启动器。以下安装脚本会选择正确的平台和架构、验证发布的校验和，并保留 ChatGPT 配置文件和启动器设置。
-
-**macOS / Linux**
-
-```bash
-curl -fsSL https://github.com/jerryboganda/chatgptjev/releases/latest/download/install-launcher.sh | sh
-```
+更新前请退出启动器。以下安装脚本会验证发布的校验和，并保留 ChatGPT 配置文件和启动器设置。
 
 **Windows PowerShell**
 
