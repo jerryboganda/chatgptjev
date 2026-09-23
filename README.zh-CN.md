@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jerryboganda/chatgptjev/releases/download/v5.0.13/chatgpt-jev-5.0.13-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
+  <a href="https://github.com/jerryboganda/chatgptjev/releases/download/v5.0.14/chatgpt-jev-5.0.14-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
 </p>
 
 <p align="center">
