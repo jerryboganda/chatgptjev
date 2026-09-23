@@ -3,40 +3,47 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
 const {
   buildJob,
   compareVersions,
   createUpdateController,
   expectedChecksum,
-  macApplicationPath,
   releaseApiUrl,
   releaseAssetName,
   releaseRepository,
   validateReleaseAssetUrl,
 } = require("../electron/update.cjs");
 
-test("Linux auto-update fails closed without the stable installer wrapper", () => {
-  const previousAppImage = process.env.CODEX_WEB_GPT_APPIMAGE;
-  const previousWrapper = process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
-  process.env.CODEX_WEB_GPT_APPIMAGE = "/opt/codex/ChatGPT Jev.AppImage";
-  delete process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
-  try {
-    assert.throws(() => buildJob({
-      version: "1.2.0",
-      platform: "linux",
-      executablePath: "/tmp/transient",
-      assetPath: "/tmp/update.AppImage",
-      stagingRoot: "/tmp/stage",
-      tempRoot: "/tmp/update",
-      logPath: "/tmp/update.log",
-    }), /requires the stable install-launcher\.sh wrapper/);
-  } finally {
-    if (previousAppImage === undefined) delete process.env.CODEX_WEB_GPT_APPIMAGE;
-    else process.env.CODEX_WEB_GPT_APPIMAGE = previousAppImage;
-    if (previousWrapper === undefined) delete process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
-    else process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE = previousWrapper;
-  }
+test("Windows update jobs target the silent NSIS installer and refuse other platforms", () => {
+  const job = buildJob({
+    version: "1.2.0",
+    platform: "win32",
+    executablePath: "C:\\Users\\tester\\AppData\\Local\\Programs\\ChatGPT Jev\\ChatGPT Jev.exe",
+    assetPath: "C:\\Users\\tester\\AppData\\Local\\Temp\\chatgpt-jev-1.2.0-win-x64.exe",
+    tempRoot: "C:\\Users\\tester\\AppData\\Local\\Temp\\stage",
+    logPath: "C:\\Users\\tester\\AppData\\Roaming\\ChatGPT Jev\\logs\\update-worker.log",
+  });
+  assert.equal(job.platform, "win32");
+  assert.equal(job.version, "1.2.0");
+  assert.equal(job.source, "C:\\Users\\tester\\AppData\\Local\\Temp\\chatgpt-jev-1.2.0-win-x64.exe");
+  assert.equal(job.target, "C:\\Users\\tester\\AppData\\Local\\Programs\\ChatGPT Jev\\ChatGPT Jev.exe");
+  assert.equal(job.parentPid, process.pid);
+  assert.throws(() => buildJob({
+    version: "1.2.0",
+    platform: "linux",
+    executablePath: "/tmp/launcher",
+    assetPath: "/tmp/update.AppImage",
+    tempRoot: "/tmp/stage",
+    logPath: "/tmp/update.log",
+  }), /Updates are not supported on linux/);
+  assert.throws(() => buildJob({
+    version: "1.2.0",
+    platform: "darwin",
+    executablePath: "/Applications/ChatGPT Jev.app/Contents/MacOS/ChatGPT Jev",
+    assetPath: "/tmp/update.zip",
+    tempRoot: "/tmp/stage",
+    logPath: "/tmp/update.log",
+  }), /Updates are not supported on darwin/);
 });
 
 test("release comparison and platform assets are strict", () => {
@@ -44,37 +51,42 @@ test("release comparison and platform assets are strict", () => {
   assert.equal(compareVersions("1.1.4", "1.1.4"), 0);
   assert.equal(compareVersions("1.1.3", "1.1.4"), -1);
   assert.equal(compareVersions("1.2.0", "1.1.99"), 1);
-  assert.equal(releaseAssetName("1.2.0", "darwin", "arm64"), "chatgpt-jev-1.2.0-mac-arm64.zip");
-  assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), "chatgpt-jev-1.2.0-mac-x64.zip");
   assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "chatgpt-jev-1.2.0-win-x64.exe");
-  assert.equal(releaseAssetName("1.2.0", "linux", "x64"), "chatgpt-jev-1.2.0-linux-x64.AppImage");
+  assert.equal(releaseAssetName("1.2.0", "win32", "arm64"), null);
+  assert.equal(releaseAssetName("1.2.0", "darwin", "arm64"), null);
+  assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), null);
+  assert.equal(releaseAssetName("1.2.0", "linux", "x64"), null);
   assert.equal(releaseAssetName("1.2.0", "linux", "arm64"), null);
 });
 
 test("checksums and release URLs bind the exact expected asset", () => {
   const hash = "a".repeat(64);
-  assert.equal(expectedChecksum(`${hash}  launcher.zip\n`, "launcher.zip"), hash);
-  assert.throws(() => expectedChecksum(`${hash}  other.zip\n`, "launcher.zip"), /no entry/);
+  assert.equal(expectedChecksum(`${hash}  launcher.exe\n`, "launcher.exe"), hash);
+  assert.throws(() => expectedChecksum(`${hash}  other.exe\n`, "launcher.exe"), /no entry/);
   assert.equal(
     validateReleaseAssetUrl(
-      "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/launcher.zip",
+      "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/launcher.exe",
       "1.2.0",
-      "launcher.zip",
+      "launcher.exe",
     ),
-    "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/launcher.zip",
+    "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/launcher.exe",
   );
   assert.throws(
-    () => validateReleaseAssetUrl("https://example.com/launcher.zip", "1.2.0", "launcher.zip"),
+    () => validateReleaseAssetUrl("https://example.com/launcher.exe", "1.2.0", "launcher.exe"),
     /unexpected release asset URL/,
   );
 });
 
-test("macOS bundle resolution never guesses outside Contents/MacOS", () => {
-  assert.equal(
-    macApplicationPath("/Applications/ChatGPT Jev.app/Contents/MacOS/ChatGPT Jev"),
-    "/Applications/ChatGPT Jev.app",
-  );
-  assert.throws(() => macApplicationPath("/tmp/ChatGPT Jev"), /Could not resolve/);
+test("the detached Windows worker installs silently after the parent exits", () => {
+  const worker = fs.readFileSync(path.join(__dirname, "..", "electron", "update-worker.cjs"), "utf8");
+  assert.match(worker, /job\.platform === "win32"/);
+  assert.match(worker, /spawnSync\(job\.source, \["\/S"\]/);
+  assert.match(worker, /waitForParent/);
+  assert.match(worker, /requireFile\(job\.source, "Windows installer"\)/);
+  assert.match(worker, /requireFile\(job\.target, "Installed Windows launcher"\)/);
+  assert.match(worker, /installed and relaunched/);
+  assert.match(worker, /Unsupported update platform/);
+  assert.doesNotMatch(worker, /AppImage|darwin|runnerSource|wrapper/);
 });
 
 test("startup check runs once and exposes only a newer complete release", async () => {
@@ -82,12 +94,12 @@ test("startup check runs once and exposes only a newer complete release", async 
   const published = [];
   const controller = createUpdateController({
     currentVersion: "1.1.4",
-    platform: "linux",
+    platform: "win32",
     arch: "x64",
     packaged: true,
-    executablePath: "/tmp/launcher",
-    runtimeExecutable: "/tmp/bun",
-    logsDirectory: "/tmp/logs",
+    executablePath: "C:\\Program Files\\ChatGPT Jev\\ChatGPT Jev.exe",
+    runtimeExecutable: "C:\\Program Files\\ChatGPT Jev\\resources\\runtime\\runtime\\bun.exe",
+    logsDirectory: "C:\\logs",
     publish: (state) => published.push(state),
     dependencies: {
       fetchRelease: async () => {
@@ -96,8 +108,8 @@ test("startup check runs once and exposes only a newer complete release", async 
           tag_name: "v1.2.0",
           assets: [
             {
-              name: "chatgpt-jev-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/chatgpt-jev-1.2.0-linux-x64.AppImage",
+              name: "chatgpt-jev-1.2.0-win-x64.exe",
+              browser_download_url: "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/chatgpt-jev-1.2.0-win-x64.exe",
             },
             {
               name: "checksums.txt",
@@ -116,35 +128,25 @@ test("startup check runs once and exposes only a newer complete release", async 
 
 test("verified update is handed to one detached worker", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-update-test-"));
-  const oldAppImage = path.join(root, "versions", "1.1.4", "ChatGPT Jev.AppImage");
-  const wrapper = path.join(root, "bin", "chatgpt-jev");
-  fs.mkdirSync(path.dirname(oldAppImage), { recursive: true });
-  fs.mkdirSync(path.dirname(wrapper), { recursive: true });
-  fs.writeFileSync(oldAppImage, "old");
-  fs.writeFileSync(wrapper, "old wrapper");
-  const assetBody = Buffer.from("new appimage");
+  const assetBody = Buffer.from("new installer");
   const hash = require("node:crypto").createHash("sha256").update(assetBody).digest("hex");
   let spawned = null;
-  const previousAppImage = process.env.CODEX_WEB_GPT_APPIMAGE;
-  const previousWrapper = process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
-  process.env.CODEX_WEB_GPT_APPIMAGE = oldAppImage;
-  process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE = wrapper;
   try {
     const controller = createUpdateController({
       currentVersion: "1.1.4",
-      platform: "linux",
+      platform: "win32",
       arch: "x64",
       packaged: true,
-      executablePath: "/tmp/launcher",
-      runtimeExecutable: "/durable/bun",
+      executablePath: "C:\\Program Files\\ChatGPT Jev\\ChatGPT Jev.exe",
+      runtimeExecutable: "C:\\durable\\bun.exe",
       logsDirectory: path.join(root, "logs"),
       dependencies: {
         fetchRelease: async () => ({
           tag_name: "v1.2.0",
           assets: [
             {
-              name: "chatgpt-jev-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/chatgpt-jev-1.2.0-linux-x64.AppImage",
+              name: "chatgpt-jev-1.2.0-win-x64.exe",
+              browser_download_url: "https://github.com/jerryboganda/chatgptjev/releases/download/v1.2.0/chatgpt-jev-1.2.0-win-x64.exe",
             },
             {
               name: "checksums.txt",
@@ -152,7 +154,7 @@ test("verified update is handed to one detached worker", async () => {
             },
           ],
         }),
-        downloadText: async () => `${hash}  chatgpt-jev-1.2.0-linux-x64.AppImage\n`,
+        downloadText: async () => `${hash}  chatgpt-jev-1.2.0-win-x64.exe\n`,
         downloadFile: async (_url, destination) => fs.writeFileSync(destination, assetBody),
         sha256: (filePath) => require("node:crypto").createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
         spawnWorker: (runtime, worker, job) => {
@@ -163,74 +165,15 @@ test("verified update is handed to one detached worker", async () => {
     });
     await controller.checkOnce();
     const launch = await controller.beginInstall();
-    assert.equal(spawned.runtime, "/durable/bun");
+    assert.equal(spawned.runtime, "C:\\durable\\bun.exe");
     assert.equal(spawned.data.version, "1.2.0");
-    assert.equal(spawned.data.target, oldAppImage);
-    assert.equal(spawned.data.wrapper, wrapper);
-    assert.equal(path.basename(spawned.data.runnerSource), "linux-appimage-runner.sh");
-    assert.equal(fs.existsSync(spawned.data.runnerSource), true);
+    assert.equal(spawned.data.platform, "win32");
+    assert.equal(spawned.data.source, path.join(launch.tempRoot, "chatgpt-jev-1.2.0-win-x64.exe"));
+    assert.equal(spawned.data.target, "C:\\Program Files\\ChatGPT Jev\\ChatGPT Jev.exe");
     assert.equal(controller.getState().status, "installing");
     controller.cancelInstall(launch);
     assert.equal(fs.existsSync(launch.tempRoot), false);
     assert.deepEqual(controller.getState(), { status: "available", version: "1.2.0" });
-  } finally {
-    if (previousAppImage === undefined) delete process.env.CODEX_WEB_GPT_APPIMAGE;
-    else process.env.CODEX_WEB_GPT_APPIMAGE = previousAppImage;
-    if (previousWrapper === undefined) delete process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
-    else process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE = previousWrapper;
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("detached worker replaces an installed Linux AppImage and removes the old version", {
-  skip: process.platform === "win32" ? "Linux AppImage execution is not meaningful on Windows" : false,
-}, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-worker-test-"));
-  const jobRoot = path.join(root, "job");
-  const versionsRoot = path.join(root, "versions");
-  const oldTarget = path.join(versionsRoot, "1.1.4", "ChatGPT Jev.AppImage");
-  const newTarget = path.join(versionsRoot, "1.2.0", "ChatGPT Jev.AppImage");
-  const wrapper = path.join(root, "bin", "chatgpt-jev");
-  const marker = path.join(root, "launched");
-  const source = path.join(jobRoot, "update.AppImage");
-  const runnerSource = path.join(jobRoot, "run-appimage");
-  const logPath = path.join(root, "logs", "update-worker.log");
-  fs.mkdirSync(path.dirname(oldTarget), { recursive: true });
-  fs.mkdirSync(path.dirname(wrapper), { recursive: true });
-  fs.mkdirSync(jobRoot, { recursive: true });
-  fs.writeFileSync(oldTarget, "old");
-  fs.writeFileSync(wrapper, "old wrapper");
-  fs.writeFileSync(source, `#!/bin/sh\nprintf launched > ${JSON.stringify(marker)}\n`, { mode: 0o755 });
-  fs.writeFileSync(runnerSource, "#!/bin/sh\ntarget=\"$1\"\nshift\nexec \"$target\" \"$@\"\n", { mode: 0o755 });
-  const jobPath = path.join(jobRoot, "job.json");
-  fs.writeFileSync(jobPath, JSON.stringify({
-    version: "1.2.0",
-    platform: "linux",
-    parentPid: 2_147_483_647,
-    tempRoot: jobRoot,
-    logPath,
-    source,
-    target: oldTarget,
-    wrapper,
-    runnerSource,
-  }));
-  try {
-    const result = spawnSync(process.execPath, [path.join(__dirname, "..", "electron", "update-worker.cjs"), jobPath], {
-      encoding: "utf8",
-      timeout: 10_000,
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(fs.existsSync(newTarget), true);
-    assert.equal(fs.existsSync(path.dirname(oldTarget)), false);
-    assert.match(fs.readFileSync(wrapper, "utf8"), /versions\/1\.2\.0\/ChatGPT Jev\.AppImage/);
-    assert.doesNotMatch(fs.readFileSync(wrapper, "utf8"), /APPIMAGE_EXTRACT_AND_RUN/);
-    assert.equal(fs.existsSync(path.join(versionsRoot, "run-appimage")), true);
-    const deadline = Date.now() + 3_000;
-    while (!fs.existsSync(marker) && Date.now() < deadline) {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-    }
-    assert.equal(fs.readFileSync(marker, "utf8"), "launched");
-    assert.match(fs.readFileSync(logPath, "utf8"), /installed and relaunched/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -247,22 +190,22 @@ test("release channel defaults to the fork repository and honors the environment
     assert.equal(releaseApiUrl(), "https://api.github.com/repos/staging-owner/chatgptjev-staging/releases/latest");
     assert.equal(
       validateReleaseAssetUrl(
-        "https://github.com/staging-owner/chatgptjev-staging/releases/download/v1.2.0/launcher.zip",
+        "https://github.com/staging-owner/chatgptjev-staging/releases/download/v1.2.0/launcher.exe",
         "1.2.0",
-        "launcher.zip",
+        "launcher.exe",
       ),
-      "https://github.com/staging-owner/chatgptjev-staging/releases/download/v1.2.0/launcher.zip",
+      "https://github.com/staging-owner/chatgptjev-staging/releases/download/v1.2.0/launcher.exe",
     );
     assert.throws(
       () => validateReleaseAssetUrl(
-        "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+        "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/launcher.exe",
         "1.2.0",
-        "launcher.zip",
+        "launcher.exe",
       ),
       /unexpected release asset URL/,
     );
     assert.throws(
-      () => validateReleaseAssetUrl("https://example.com/launcher.zip", "1.2.0", "launcher.zip"),
+      () => validateReleaseAssetUrl("https://example.com/launcher.exe", "1.2.0", "launcher.exe"),
       /unexpected release asset URL/,
     );
   } finally {

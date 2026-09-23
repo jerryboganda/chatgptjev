@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const https = require("node:https");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn, spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const { pipeline } = require("node:stream/promises");
 
 // Release channel: this fork publishes its own installers to its own repository.
@@ -53,14 +53,8 @@ function releaseVersion(tagName) {
 }
 
 function releaseAssetName(version, platform = process.platform, arch = process.arch) {
-  if (platform === "darwin" && ["arm64", "x64"].includes(arch)) {
-    return `chatgpt-jev-${version}-mac-${arch}.zip`;
-  }
   if (platform === "win32" && arch === "x64") {
     return `chatgpt-jev-${version}-win-x64.exe`;
-  }
-  if (platform === "linux" && arch === "x64") {
-    return `chatgpt-jev-${version}-linux-x64.AppImage`;
   }
   return null;
 }
@@ -150,36 +144,7 @@ function sha256(filePath) {
   return hash.digest("hex");
 }
 
-function macApplicationPath(executablePath) {
-  const match = /^(.*\.app)[\\/]Contents[\\/]MacOS[\\/][^\\/]+$/.exec(executablePath);
-  if (!match?.[1]) throw new Error(`Could not resolve the macOS application bundle from ${executablePath}`);
-  return match[1];
-}
-
-function findMacApplication(root) {
-  const entries = fs.readdirSync(root, { withFileTypes: true });
-  const appEntry = entries.find((entry) => entry.isDirectory() && entry.name.endsWith(".app"));
-  if (!appEntry) throw new Error("The macOS update archive does not contain an application bundle");
-  const application = path.join(root, appEntry.name);
-  const executable = path.join(application, "Contents", "MacOS", "ChatGPT Jev");
-  if (!fs.existsSync(executable) || !fs.statSync(executable).isFile()) {
-    throw new Error("The macOS update archive is incomplete");
-  }
-  return application;
-}
-
-function buildJob({ version, platform, executablePath, assetPath, stagingRoot, tempRoot, logPath }) {
-  if (platform === "darwin") {
-    return {
-      version,
-      platform,
-      parentPid: process.pid,
-      tempRoot,
-      logPath,
-      source: findMacApplication(stagingRoot),
-      target: macApplicationPath(executablePath),
-    };
-  }
+function buildJob({ version, platform, executablePath, assetPath, tempRoot, logPath }) {
   if (platform === "win32") {
     return {
       version,
@@ -191,29 +156,7 @@ function buildJob({ version, platform, executablePath, assetPath, stagingRoot, t
       target: executablePath,
     };
   }
-  if (platform === "linux") {
-    const target = process.env.CODEX_WEB_GPT_APPIMAGE?.trim()
-      || process.env.APPIMAGE?.trim();
-    if (!target || !path.isAbsolute(target)) {
-      throw new Error("The running Linux AppImage path is unavailable; reinstall with install-launcher.sh");
-    }
-    const wrapper = process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE?.trim();
-    if (!wrapper || !path.isAbsolute(wrapper)) {
-      throw new Error("Linux auto-update requires the stable install-launcher.sh wrapper; reinstall once");
-    }
-    return {
-      version,
-      platform,
-      parentPid: process.pid,
-      tempRoot,
-      logPath,
-      source: assetPath,
-      target,
-      wrapper,
-      runnerSource: path.join(tempRoot, "linux-appimage-runner.sh"),
-    };
-  }
-  throw new Error(`Updates are not supported on ${platform}`);
+  throw new Error(`Updates are not supported on ${platform}. This fork updates Windows installs only.`);
 }
 
 function defaultDependencies() {
@@ -222,29 +165,6 @@ function defaultDependencies() {
     downloadText,
     downloadFile,
     sha256,
-    extractMac(archive, destination) {
-      fs.mkdirSync(destination, { recursive: true, mode: 0o700 });
-      const result = spawnSync("/usr/bin/ditto", ["-x", "-k", archive, destination], {
-        encoding: "utf8",
-        timeout: 120_000,
-      });
-      if (result.error) throw result.error;
-      if (result.status !== 0) throw new Error(`Could not extract the macOS update: ${result.stderr.trim()}`);
-    },
-    linuxRunnerSource() {
-      if (typeof process.resourcesPath === "string" && process.resourcesPath) {
-        const unpacked = path.join(
-          process.resourcesPath,
-          "app.asar.unpacked",
-          "assets",
-          "linux-appimage-runner.sh",
-        );
-        if (fs.statSync(unpacked, { throwIfNoEntry: false })?.isFile()) return unpacked;
-      }
-      const source = path.resolve(__dirname, "..", "assets", "linux-appimage-runner.sh");
-      if (fs.statSync(source, { throwIfNoEntry: false })?.isFile()) return source;
-      throw new Error("Packaged Linux AppImage runner is missing");
-    },
     spawnWorker(runtimeExecutable, workerPath, jobPath) {
       return spawn(runtimeExecutable, [workerPath, jobPath], {
         detached: true,
@@ -331,15 +251,6 @@ function createUpdateController({
         const actual = deps.sha256(assetPath);
         if (actual !== expected) throw new Error(`SHA-256 verification failed for ${available.assetName}`);
 
-        const stagingRoot = path.join(tempRoot, "stage");
-        if (platform === "darwin") deps.extractMac(assetPath, stagingRoot);
-        if (platform === "linux") {
-          fs.chmodSync(assetPath, 0o755);
-          const runnerSource = deps.linuxRunnerSource();
-          fs.copyFileSync(runnerSource, path.join(tempRoot, "linux-appimage-runner.sh"));
-          fs.chmodSync(path.join(tempRoot, "linux-appimage-runner.sh"), 0o755);
-        }
-
         const workerPath = path.join(tempRoot, "update-worker.cjs");
         fs.copyFileSync(path.join(__dirname, "update-worker.cjs"), workerPath);
         const job = buildJob({
@@ -347,7 +258,6 @@ function createUpdateController({
           platform,
           executablePath,
           assetPath,
-          stagingRoot,
           tempRoot,
           logPath: path.join(logsDirectory, "update-worker.log"),
         });
@@ -391,7 +301,6 @@ module.exports = {
   compareVersions,
   createUpdateController,
   expectedChecksum,
-  macApplicationPath,
   parseVersion,
   releaseApiUrl,
   releaseAssetName,

@@ -13,7 +13,6 @@ const expectedVersion = launcherManifest.version;
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-jev-package-smoke-"));
 const markerPath = path.join(scratch, "ready.json");
 const coreHome = path.join(scratch, "core-home");
-let macAppBundle;
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -77,25 +76,7 @@ try {
   let args;
   const env = smokeEnvironment();
 
-  if (process.platform === "darwin") {
-    const archive = artifact(/-mac-(?:arm64|x64)\.zip$/, "macOS launcher archive");
-    const stage = path.join(scratch, "stage");
-    fs.mkdirSync(stage);
-    run("ditto", ["-x", "-k", archive, stage]);
-    macAppBundle = path.join(stage, "ChatGPT Jev.app");
-    executable = path.join(macAppBundle, "Contents", "MacOS", "ChatGPT Jev");
-    command = executable;
-    args = ["--launcher-smoke-test"];
-  } else if (process.platform === "linux") {
-    executable = artifact(/-linux-x64\.AppImage$/, "Linux AppImage");
-    fs.chmodSync(executable, 0o755);
-    run(path.join(launcherRoot, "scripts", "smoke-linux-appimage-symbols.sh"), [executable], {
-      timeout: 120_000,
-    });
-    command = "xvfb-run";
-    args = ["-a", executable, "--launcher-smoke-test"];
-    env.APPIMAGE_EXTRACT_AND_RUN = "1";
-  } else if (process.platform === "win32") {
+  if (process.platform === "win32") {
     const installer = artifact(/-win-x64\.exe$/, "Windows installer");
     // The NSIS installer extracts a ~180 MB runtime; on cold CI runners the
 // extraction alone can exceed two minutes, so give it ten.
@@ -142,17 +123,5 @@ try {
   }
   process.stdout.write(`PACKAGED_LAUNCHER_SMOKE_OK ${process.platform}/${process.arch}\n`);
 } finally {
-  try {
-    if (macAppBundle) {
-      const launchServices =
-        "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-      run(
-        launchServices,
-        ["-u", macAppBundle],
-      );
-      run(launchServices, ["-gc"]);
-    }
-  } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
-  }
+  fs.rmSync(scratch, { recursive: true, force: true });
 }
